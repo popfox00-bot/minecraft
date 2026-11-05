@@ -114,23 +114,33 @@ async function main() {
   let biomeSeq = 0;
   let biomeTimer = 0;
   const biomeSpan = h('span', { class: 'ro-biome' });
+  const roInfo = h('div', {});
+  const roPin = h('div', { class: 'ro-actions' });
+  readout.append(roInfo, roPin);
+  let pinKey = '';
   function updateReadout() {
     const p = cursor ?? pinned ?? view.centerBlock();
     const what = cursor ? '' : pinned ? 'Tapped' : 'Centre';
     const ch = chunkOf(p.x, p.z);
-    readout.innerHTML = '';
     const other = toOtherDimension(store.settings.dim, p.x, p.z);
-    readout.append(
+    roInfo.innerHTML = '';
+    roInfo.append(
       h('div', { class: 'ro-main' },
         what && h('span', { class: 'ro-what' }, what),
         h('strong', {}, `${p.x}, ${p.z}`),
         biomeSpan),
       h('div', { class: 'ro-sub' }, `Chunk ${ch.x}, ${ch.z} · ${other.dim === 'nether' ? 'Nether' : 'Overworld'} ${other.x}, ${other.z}`),
     );
-    if (pinned && !cursor) {
-      readout.append(h('div', { class: 'ro-actions' },
-        h('button', { class: 'primary small', onclick: () => addAt(pinned!) }, '+ Add marker here'),
-        h('button', { class: 'small', onclick: () => { pinned = null; view.showPick(null); updateReadout(); } }, 'Clear')));
+    // The pinned-point actions only re-render when the pin changes, so the
+    // buttons stay stable while the mouse moves over the map.
+    const key = pinned ? `${pinned.x},${pinned.z}` : '';
+    if (key !== pinKey) {
+      pinKey = key;
+      roPin.innerHTML = '';
+      roPin.hidden = !pinned;
+      if (pinned) roPin.append(
+        h('button', { class: 'primary small', onclick: () => addAt(pinned!) }, `+ Add marker at ${pinned.x}, ${pinned.z}`),
+        h('button', { class: 'small', onclick: () => { pinned = null; view.showPick(null); updateReadout(); } }, 'Clear'));
     }
     clearTimeout(biomeTimer);
     const seq = ++biomeSeq;
@@ -160,6 +170,7 @@ async function main() {
     view.showPick(null);
     await store.updateSettings({ dim: d });
     view.goTo(o.x, o.z, view.map.getZoom(), false);
+    updateReadout();
   }
 
   // ---- legend ----
@@ -191,12 +202,14 @@ async function main() {
     sheetBody.innerHTML = '';
     sheetBody.append(body);
     sheet.classList.add('open');
+    app.classList.add('sheet-open');
     sheet.setAttribute('aria-hidden', 'false');
     current = title;
   }
   let current = '';
   function closeSheet() {
     sheet.classList.remove('open');
+    app.classList.remove('sheet-open');
     sheet.setAttribute('aria-hidden', 'true');
     current = '';
     if (view.selectedId) view.select(null);

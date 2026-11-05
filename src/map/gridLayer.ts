@@ -5,14 +5,14 @@ import L from 'leaflet';
 import { tileBlocks, TILE_PX } from '../coords';
 
 export const CHUNK_MIN_ZOOM = 1; // 16 blocks = 32px
-export const REGION_MIN_ZOOM = -3; // 512 blocks = 64px
+export const REGION_MIN_ZOOM = -2; // 512 blocks = 128px
 
 export class GridLayer extends L.GridLayer {
   chunk = true;
   region = true;
 
   constructor(opts?: L.GridLayerOptions) {
-    super({ tileSize: TILE_PX, pane: 'overlayPane', updateWhenZooming: false, ...opts });
+    super({ tileSize: TILE_PX, pane: 'overlayPane', updateWhenZooming: false, minZoom: -20, maxZoom: 20, ...opts });
   }
 
   setVisible(chunk: boolean, region: boolean): void {

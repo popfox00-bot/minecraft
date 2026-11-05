@@ -1,1 +1,169 @@
-# minecraft
+# WorldAtlas
+
+A personal map and location tracker for **one** Minecraft Bedrock world. It works like Chunkbase, but for a single seed, with your own markers, and a deliberately plain look.
+
+- Seed: `-2829401596156382806` (change it in Settings)
+- Static site: Vite + TypeScript + Leaflet (`L.CRS.Simple`, 1 map unit = 1 block, north/−Z up, +X right)
+- Biomes: [cubiomes](https://github.com/Cubitect/cubiomes) compiled to WebAssembly, running in a pool of Web Workers. The map labels this **"Biomes: Java-parity generator"**.
+- Storage: IndexedDB for markers, categories, settings and cached biome tiles. JSON export/import for backups.
+- No backend.
+
+## Quick start
+
+```bash
+npm install
+```
+
+```bash
+npm run dev
+```
+
+Production build (output goes to `dist/`, and works from any sub-path):
+
+```bash
+npm run build
+```
+
+Tests:
+
+```bash
+npm test
+```
+
+## Building the WASM module
+
+The compiled module, `src/wasm/cubiomes.js`, is committed: it is a single-file ES module with the `.wasm` embedded. So a normal `npm run build` (and CI) does not need Emscripten. Rebuild it only after changing `vendor/cubiomes` or `wasm/worldatlas.c`.
+
+1. Install Emscripten. This build used emcc 6.0.13.
+
+   ```bash
+   git clone https://github.com/emscripten-core/emsdk.git
+   ```
+
+   ```bash
+   cd emsdk && ./emsdk install latest && ./emsdk activate latest && source ./emsdk_env.sh
+   ```
+
+2. Build:
+
+   ```bash
+   npm run build:wasm
+   ```
+
+`scripts/build-wasm.sh` runs this Emscripten command:
+
+```bash
+emcc -O3 -flto -fwrapv -Ivendor/cubiomes \
+  vendor/cubiomes/{noise,biomes,layers,biomenoise,generator,finders,util,quadbase}.c \
+  wasm/worldatlas.c -o src/wasm/cubiomes.js \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createCubiomes \
+  -sENVIRONMENT=web,worker,node -sSINGLE_FILE=1 -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0 \
+  -sEXPORTED_FUNCTIONS=_wa_init,_wa_newest_version,_wa_get_biome,_wa_gen_area,_wa_biome_name,_wa_is_overworld \
+  -sEXPORTED_RUNTIME_METHODS=UTF8ToString,HEAP32
+```
+
+cubiomes is vendored in `vendor/cubiomes/` (MIT, commit in `vendor/cubiomes/COMMIT`: `e61f905`). `wasm/worldatlas.c` is the bridge. It exposes only biome functions; the structure finders are deliberately left out.
+
+### Verifying the WASM build
+
+`tests/biome-wasm.test.ts` loads the WASM in Node and checks it against values from a native `gcc` build of the same cubiomes sources. They match exactly.
+
+## Deploying
+
+- **GitHub Pages:** `.github/workflows/pages.yml` runs the tests, builds, and deploys on every push to `main`. In the repo settings, set Settings → Pages → Source to "GitHub Actions".
+- **Cloudflare Pages:** use build command `npm run build` and output directory `dist`.
+
+`vite.config.ts` uses `base: './'`, so the build works from any path.
+
+## Features (phase 1)
+
+- **Map:** muted biome palette. A faint chunk grid (16 blocks, from zoom +1) and region grid (512 blocks, from zoom −2) show only when zoomed in. The cursor/tap readout shows X, Z, biome, chunk and the 1:8 position in the other dimension. The "Go to" box takes `X, Z`, `X Y Z` or a marker name. Zoom runs from −6 (1 px = 64 blocks) to +5 (32 px/block).
+- **Dimensions:** Overworld and Nether tabs. Switching tabs converts the view position 1:8. Each marker belongs to one dimension. A marker can show its *linked portal position* (dashed ghost marker) in the other dimension.
+- **Markers:** add one by tapping the map and pressing "+ Add marker at X, Z", by using the + button (map centre), or by typing coordinates in the form. Fields: name, category, X, Y (optional), Z, dimension, notes, status (planned / found / built / looted), created date.
+- **Categories:** you can edit the name, colour and icon (18 built-in glyphs), add new ones, and delete them (their markers move to another category). The compact legend toggles visibility per category.
+- **List:** search, filter by category, status and dimension, and sort by distance from a reference point. The reference is your Base marker by default; you can also pick any marker or the map centre. Tapping an item flies the map to it.
+- **Tools:** 1:8 converter, and a measure tool. Tap two points, or tap markers to include their Y. It shows the 3D distance, the horizontal distance and the Nether travel equivalent.
+- **Settings:** seed, generator version, theme (system/light/dark), grid toggles, JSON export/import, clear tile cache, category editor.
+
+On first run it creates two seed markers, *Dungeon A* (1180, −5, −2808) and *Dungeon B* (1204, −1, −2807), plus a measure line between them that reads **24.4 blocks**. That figure is the 3D distance; the horizontal distance is 24.0.
+
+## Debug: `getBiome`
+
+Open the browser console:
+
+```js
+await getBiome(0, 0)                          // surface biome, current dimension
+await getBiome(1180, -2808, { y: -5 })        // 3D biome at a Y level (cave biomes)
+await getBiome(0, 0, { dim: 'nether' })
+```
+
+On startup the app also logs the spot checks. Current results for this seed:
+
+| Position | Surface (Y 256) | At given Y |
+|---|---|---|
+| 0, 0 | desert | — |
+| Dungeon A 1180, −2808 | sparse_jungle | lush_caves (Y −5) |
+| Dungeon B 1204, −2807 | sparse_jungle | lush_caves (Y −1) |
+| Nether 0, 0 | crimson_forest | — |
+
+## How biome tiles work
+
+- Leaflet zoom 0 = 1 px per block. Each tile is 256 px.
+- Each tile is generated with `genBiomes` at the coarsest cubiomes scale (1, 4, 16, 64, 256) that keeps it at 128 cells across or fewer. Zoom +2 and up uses 1:1 (voronoi) sampling.
+- The surface map samples at Y = 256. That is above the terrain, so cave biomes (lush caves, dripstone, deep dark) don't cover the surface. Use `getBiome(x, z, { y })` to see the 3D biome at a given depth.
+- Tiles are cached in IndexedDB as raw biome IDs, keyed by `seed|version|dimension|zoom|x|y`. Changing the palette or theme never invalidates the cache.
+- Jobs are queued on the main thread and sent to idle workers nearest-first. Jobs for tiles that scroll out of view are cancelled before they start.
+
+## Acceptance checks
+
+```bash
+npm test
+```
+
+```bash
+npm run build && npx vite preview --port 4173 &
+```
+
+```bash
+npm run e2e -- http://localhost:4173/
+```
+
+`npm test` covers coordinate transforms (block ↔ map units, Overworld ↔ Nether floor division such as −2808 → −351, chunk/region, tile maths), seed parsing, WASM-vs-native biomes, and an IndexedDB export → wipe → import round-trip.
+
+`npm run e2e` drives Chromium through:
+
+- seed data and the measure label
+- `getBiome`
+- adding a marker in the UI, then reloading
+- UI export → wipe → UI import, compared exactly
+- generating hundreds of tiles from a cold cache while panning/zooming, with frame timing and long tasks measured
+- tiles present at every zoom level in both dimensions
+
+## Known limitations
+
+- **Bedrock structures are not predicted.** cubiomes' structure placement is Java-only and wrong for Bedrock, so it is not compiled in. Villages, strongholds, monuments and so on come only from markers you add.
+- **Biomes come from a Java-parity generator.** Bedrock and Java have shared biome generation since 1.18. The newest version cubiomes supports is Java **1.21.4 (Winter Drop, pale garden)**. As far as I know, no later version has changed biome generation, but that is not verified. If a later update adds or moves biomes, the map will be wrong until cubiomes is updated.
+- **Nether biomes are not verified against Bedrock.** They use cubiomes' Java Nether generator. I have not confirmed that Bedrock's Nether biome layout matches Java's for the same seed, so check them in-game.
+- **The surface map is 2D.** It is sampled at Y 256. In-game F3 reports the biome at your feet, which underground can be a cave biome. Use `getBiome` with `y` to compare.
+- **Text seeds are not supported.** Seeds must be numeric 64-bit values.
+
+## TODO — Phase 2 (not started)
+
+- [ ] Experimental Bedrock structure layer, ported from public research (Earthcomputer's Bedrockified, bedrock-dev/MCBEStructureFinder). Validate it against "found" markers and show a confidence label per structure type.
+- [ ] Optional overlay of real explored terrain from tiles exported by a Bedrock renderer (e.g. bedrock-render or PapyrusCS).
+
+## Layout
+
+```
+vendor/cubiomes/      cubiomes sources (vendored, MIT)
+wasm/worldatlas.c     C bridge exported to JS
+scripts/build-wasm.sh Emscripten build
+src/wasm/cubiomes.js  built module (committed)
+src/gen/              worker, worker pool client, generator wrapper
+src/map/              Leaflet view, biome tile layer, grid layer, tile cache
+src/ui/panels.ts      list, marker form, categories, settings, tools
+src/coords.ts         coordinate maths (unit-tested)
+src/store.ts          state, IndexedDB persistence, export/import
+tests/                vitest unit tests
+scripts/e2e.mjs       Playwright acceptance checks
+```

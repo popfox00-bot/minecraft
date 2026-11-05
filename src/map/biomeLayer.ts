@@ -26,7 +26,7 @@ export class BiomeLayer extends L.GridLayer {
     private source: BiomeSource,
     opts?: L.GridLayerOptions,
   ) {
-    super({ tileSize: TILE_PX, updateWhenZooming: false, keepBuffer: 1, ...opts });
+    super({ tileSize: TILE_PX, updateWhenZooming: false, keepBuffer: 1, minZoom: -20, maxZoom: 20, ...opts });
     this.on('tileunload', (e: L.TileEvent) => (e.tile as unknown as TileEl)._abort?.abort());
   }
 

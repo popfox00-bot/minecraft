@@ -10,7 +10,7 @@
   --danger: #b23a3a;
   --map-bg: #e6e6e1;
   --grid-chunk: rgba(0, 0, 0, 0.09);
-  --grid-region: rgba(0, 0, 0, 0.28);
+  --grid-region: rgba(0, 0, 0, 0.2);
   --measure: #1d1f22;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   --tap: 44px;
@@ -228,7 +228,18 @@ button.danger { color: var(--danger); }
 .fatal { position: absolute; inset: 0; z-index: 2000; background: var(--panel); padding: 16px; white-space: pre-wrap; }
 
 @media (max-width: 759px) {
+  .topbar { gap: 4px; }
+  .top-actions { gap: 4px; margin-left: auto; }
+  .tab { padding: 0 9px; }
   .goto { order: 10; flex-basis: 100%; }
   .legend { right: 60px; max-width: 200px; }
   .readout { max-width: calc(100% - 16px); bottom: calc(max(8px, env(safe-area-inset-bottom)) + 48px); }
+}
+
+/* desktop: keep right-hand map controls visible beside the open sidebar */
+@media (min-width: 760px) {
+  .sheet-open .legend { right: 420px; }
+  .sheet-open .topbar { right: 360px; }
+  .sheet-open .leaflet-right { right: 360px; }
+  .legend, .leaflet-right { transition: right .18s ease-out; }
 }
