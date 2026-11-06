@@ -39,7 +39,7 @@ export function formatMeasure(m: Measure): { main: string; detail: string } {
   const parts: string[] = [];
   if (has3d) parts.push(`${fmtNum(flat)} horizontal`);
   if (m.dim === 'overworld') parts.push(`Nether travel ≈ ${fmtNum(netherTravelEquivalent(flat))}`);
-  else parts.push(`Overworld equiv. ≈ ${fmtNum(flat * 8)}`);
+  else if (m.dim === 'nether') parts.push(`Overworld equiv. ≈ ${fmtNum(flat * 8)}`);
   return { main, detail: parts.join(' · ') };
 }
 
@@ -51,6 +51,7 @@ export class MapView {
   private ghostLayer = L.layerGroup();
   private measureLayer = L.layerGroup();
   private pickLayer = L.layerGroup();
+  private searchLayer = L.layerGroup();
   private markerEls = new Map<string, L.Marker>();
   measuring = false;
   private pendingA: MeasurePoint | null = null;
@@ -87,6 +88,7 @@ export class MapView {
     this.ghostLayer.addTo(this.map);
     this.measureLayer.addTo(this.map);
     this.markerLayer.addTo(this.map);
+    this.searchLayer.addTo(this.map);
     this.pickLayer.addTo(this.map);
 
     this.map.on('click', (e: L.LeafletMouseEvent) => {
@@ -175,6 +177,7 @@ export class MapView {
       } else if (m.showLinked) {
         // Linked portal position in the other dimension.
         const o = toOtherDimension(m.dim, m.x, m.z);
+        if (!o || o.dim !== dim) continue;
         L.marker(blockCenterLatLng(o.x, o.z), {
           icon: L.divIcon({
             className: 'mk-wrap ghost',
@@ -239,6 +242,45 @@ export class MapView {
       icon: L.divIcon({ className: 'measure-label', html: `<span>${esc(main)}</span>`, iconSize: [0, 0] }),
       interactive: false,
     }).addTo(this.measureLayer);
+  }
+
+  // ---- biome search results ------------------------------------------------------
+
+  showSearchHits(hits: { x: number; z: number }[], color: string, onTap: (i: number) => void): void {
+    this.searchLayer.clearLayers();
+    hits.forEach((h, i) => {
+      L.marker(blockCenterLatLng(h.x, h.z), {
+        icon: L.divIcon({
+          className: 'hit-wrap',
+          html: `<div class="hit" style="--c:${color}">${i + 1}</div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        }),
+        title: `Result ${i + 1}: ${h.x}, ${h.z}`,
+        zIndexOffset: 500,
+      })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onTap(i);
+        })
+        .addTo(this.searchLayer);
+    });
+  }
+
+  clearSearchHits(): void {
+    this.searchLayer.clearLayers();
+  }
+
+  /** Fits the view to the origin plus all hits. */
+  fitPoints(pts: { x: number; z: number }[], padTopLeft: [number, number] = [0, 0], padBottomRight: [number, number] = [0, 0]): void {
+    if (!pts.length) return;
+    const b = L.latLngBounds(pts.map((p) => blockCenterLatLng(p.x, p.z)));
+    this.map.flyToBounds(b, {
+      maxZoom: 1,
+      duration: 0.6,
+      paddingTopLeft: L.point(padTopLeft[0] + 30, padTopLeft[1] + 30),
+      paddingBottomRight: L.point(padBottomRight[0] + 30, padBottomRight[1] + 30),
+    });
   }
 
   // ---- misc -------------------------------------------------------------------

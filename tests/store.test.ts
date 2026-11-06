@@ -29,6 +29,7 @@ describe('store', () => {
     await s.saveMarker({ ...s.markers[0], id: 'x1', name: 'Nether hub', dim: 'nether', x: -3, y: 70, z: 9, notes: 'ünïcødé ✓', status: 'built', showLinked: true });
     await s.saveCategory({ ...s.categories[0], id: 'custom', name: 'Custom', color: '#123456', icon: 'ship', visible: false, order: 99 });
     const before = s.exportData();
+    expect(JSON.stringify(before)).not.toContain('updatedAt');
     const json = JSON.stringify(before);
     await s.wipe();
     expect(s.markers).toHaveLength(0);

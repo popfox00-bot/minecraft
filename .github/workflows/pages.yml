@@ -5,6 +5,10 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # If Pages is still set to "Deploy from a branch", GitHub's own branch build
+  # runs on every push and publishes the raw (unbuilt) source. Re-deploy the
+  # built app after it finishes so ours is always the last deploy.
+  page_build:
   workflow_dispatch:
 
 permissions:

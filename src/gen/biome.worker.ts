@@ -4,6 +4,7 @@
 import createCubiomes from '../wasm/cubiomes.js';
 import { BiomeGen } from './core';
 import type { WorkerRequest, WorkerResponse } from './protocol';
+import { searchBiome, refineHit, type AreaFn } from './search';
 
 const ready = createCubiomes().then((m) => new BiomeGen(m));
 
@@ -22,6 +23,14 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       case 'point': {
         gen.configure(req.seed, req.mc, req.dim);
         res = { id: req.id, ok: true, biome: gen.biomeAt(req.x, req.z, req.y) };
+        break;
+      }
+      case 'search': {
+        gen.configure(req.seed, req.mc, req.dim);
+        const area: AreaFn = (s, cx, cz, n, y) => gen.area(s, cx, cz, n, y);
+        const result = searchBiome(area, req.opts);
+        result.hits = result.hits.map((h) => refineHit(area, h, req.opts));
+        res = { id: req.id, ok: true, search: result };
         break;
       }
       case 'area': {

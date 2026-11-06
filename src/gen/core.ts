@@ -5,7 +5,7 @@ import type { CubiomesModule } from '../wasm/cubiomes';
 import { seedHalves } from '../seed';
 import { cubiomesY, SURFACE_Y, type Dimension } from '../coords';
 
-export const DIM_ID: Record<Dimension, number> = { overworld: 0, nether: -1 };
+export const DIM_ID: Record<Dimension, number> = { overworld: 0, nether: -1, end: 1 };
 
 export class BiomeGen {
   private key = '';

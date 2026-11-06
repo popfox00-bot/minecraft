@@ -7,7 +7,9 @@
 // Overworld -> Nether (block -2808 -> -351, not -351.0 truncated to -351 by
 // accident: -2801 -> -351 too, and -1 -> -1, not 0).
 
-export type Dimension = 'overworld' | 'nether';
+export type Dimension = 'overworld' | 'nether' | 'end';
+export const DIMENSIONS: Dimension[] = ['overworld', 'nether', 'end'];
+export const DIM_LABEL: Record<Dimension, string> = { overworld: 'Overworld', nether: 'Nether', end: 'End' };
 
 export interface XZ {
   x: number;
@@ -49,10 +51,11 @@ export function netherToOverworld(x: number, z: number): XZ {
   return { x: x * 8, z: z * 8 };
 }
 
-/** Converts a position to the other dimension. */
-export function toOtherDimension(dim: Dimension, x: number, z: number): { dim: Dimension } & XZ {
+/** Converts a position to the linked dimension (Overworld <-> Nether, 1:8). The End has no linked dimension. */
+export function toOtherDimension(dim: Dimension, x: number, z: number): ({ dim: Dimension } & XZ) | null {
   if (dim === 'overworld') return { dim: 'nether', ...overworldToNether(x, z) };
-  return { dim: 'overworld', ...netherToOverworld(x, z) };
+  if (dim === 'nether') return { dim: 'overworld', ...netherToOverworld(x, z) };
+  return null;
 }
 
 export function distance2D(a: XZ, b: XZ): number {

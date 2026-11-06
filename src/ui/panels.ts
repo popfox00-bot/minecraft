@@ -8,6 +8,8 @@ import {
   overworldToNether,
   parseCoords,
   toOtherDimension,
+  DIM_LABEL,
+  DIMENSIONS,
   type Dimension,
 } from '../coords';
 import { ICON_NAMES, iconSvg, type IconName } from '../icons';
@@ -15,6 +17,9 @@ import { newId, slug, STATUSES, VERSIONS, type Category, type Marker, type Statu
 import { normalizeSeed } from '../seed';
 import type { Store } from '../store';
 import { formatMeasure } from '../map/mapView';
+import { BIOMES_BY_DIM, BIOME_COLORS, CAVE_BIOME_Y, prettyBiome } from '../biomes';
+import type { SearchHit, SearchResult } from '../gen/search';
+import type { Syncer, SyncStatus } from '../sync/syncer';
 
 export interface PanelHost {
   store: Store;
@@ -27,7 +32,7 @@ export interface PanelHost {
   startMeasure(): void;
 }
 
-const dimLabel = (d: Dimension) => (d === 'overworld' ? 'Overworld' : 'Nether');
+const dimLabel = (d: Dimension) => DIM_LABEL[d];
 
 export function catDot(color: string, icon: IconName, size = 22): HTMLElement {
   return h('span', { class: 'cat-dot', style: `--c:${color};width:${size}px;height:${size}px`, html: iconSvg(icon, Math.round(size * 0.55)) });
@@ -75,8 +80,7 @@ export function listPanel(host: PanelHost): HTMLElement {
   const dimSel = h('select', { 'aria-label': 'Dimension filter' },
     h('option', { value: 'current' }, 'This dimension'),
     h('option', { value: 'all' }, 'All dimensions'),
-    h('option', { value: 'overworld' }, 'Overworld'),
-    h('option', { value: 'nether' }, 'Nether'));
+    DIMENSIONS.map((d) => h('option', { value: d }, DIM_LABEL[d])));
   dimSel.value = listState.dim;
 
   const render = () => {
@@ -95,7 +99,7 @@ export function listPanel(host: PanelHost): HTMLElement {
     // dimension are converted 1:8 first.
     const dist = (m: Marker) => {
       const p = m.dim === refDim ? m : toOtherDimension(m.dim, m.x, m.z);
-      return distance2D(refPos, p);
+      return p && (m.dim === refDim || p.dim === refDim) ? distance2D(refPos, p) : Infinity;
     };
     const items = store.markers
       .filter((m) => dimFilter === 'all' || m.dim === dimFilter)
@@ -117,7 +121,7 @@ export function listPanel(host: PanelHost): HTMLElement {
               h('span', { class: 'mitem-name' }, m.name),
               h('span', { class: 'mitem-sub' },
                 `${formatXZ(m.x, m.z)}${m.y != null ? ` · Y ${m.y}` : ''} · ${dimLabel(m.dim)} · ${m.status}`)),
-            h('span', { class: 'mitem-dist' }, m === refMarker ? 'ref' : `${fmtNum(d, 0)}`)),
+            h('span', { class: 'mitem-dist' }, m === refMarker ? 'ref' : Number.isFinite(d) ? `${fmtNum(d, 0)}` : '—')),
         ),
       );
     }
@@ -144,7 +148,7 @@ export function markerForm(host: PanelHost, m: Marker, isNew: boolean): HTMLElem
   cat.value = m.categoryId;
   const num = (v: number | null, ph = '') => h('input', { type: 'text', inputMode: 'numeric', value: v == null ? '' : String(v), placeholder: ph });
   const x = num(m.x), y = num(m.y, 'optional'), z = num(m.z);
-  const dim = h('select', {}, h('option', { value: 'overworld' }, 'Overworld'), h('option', { value: 'nether' }, 'Nether'));
+  const dim = h('select', {}, DIMENSIONS.map((d) => h('option', { value: d }, DIM_LABEL[d])));
   dim.value = m.dim;
   const status = h('select', {}, STATUSES.map((s) => h('option', { value: s }, s)));
   status.value = m.status;
@@ -155,7 +159,7 @@ export function markerForm(host: PanelHost, m: Marker, isNew: boolean): HTMLElem
     const xv = Number(x.value), zv = Number(z.value);
     if (!Number.isFinite(xv) || !Number.isFinite(zv)) return (linkedInfo.textContent = '');
     const o = toOtherDimension(dim.value as Dimension, xv, zv);
-    linkedInfo.textContent = `Linked ${dimLabel(o.dim)} position: ${o.x}, ${o.z}`;
+    linkedInfo.textContent = o ? `Linked ${dimLabel(o.dim)} position: ${o.x}, ${o.z}` : 'The End has no linked dimension.';
   };
   for (const el of [x, z, dim]) el.addEventListener('input', updLinked);
   updLinked();
@@ -270,7 +274,72 @@ function categoryRow(host: PanelHost, c: Category, rerender: () => void): HTMLEl
 
 // ---- settings ----------------------------------------------------------------------
 
-export function settingsPanel(host: PanelHost, openCategories: () => void): HTMLElement {
+export function syncStatusText(s: SyncStatus): string {
+  const t = s.at ? new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  switch (s.state) {
+    case 'off': return 'Not connected — markers stay on this device only.';
+    case 'syncing': return 'Syncing…';
+    case 'ok': return `Synced ${t}`;
+    case 'error': return `Sync failed: ${s.error ?? 'unknown error'}`;
+  }
+}
+
+function syncSection(host: PanelHost, syncer: Syncer): HTMLElement {
+  const box = h('div', { class: 'sync' });
+  const statusEl = h('p', { class: 'hint sync-status' });
+  const render = () => {
+    box.innerHTML = '';
+    statusEl.textContent = syncStatusText(syncer.status);
+    statusEl.classList.toggle('error', syncer.status.state === 'error');
+    if (syncer.config) {
+      box.append(
+        h('p', { class: 'hint' }, 'Connected to your Apps Script backend. Markers, categories, seed and version sync automatically.'),
+        statusEl,
+        h('div', { class: 'actions' },
+          h('button', { onclick: () => syncer.syncNow().catch(() => {}) }, 'Sync now'),
+          h('button', { class: 'danger', onclick: async () => {
+            if (!confirm('Stop syncing on this device? Your markers stay here.')) return;
+            await syncer.disconnect();
+            render();
+          } }, 'Disconnect')),
+      );
+      return;
+    }
+    const url = h('input', { type: 'url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off', 'aria-label': 'Web app URL' });
+    const key = h('input', { type: 'password', placeholder: 'SYNC_KEY from Code.gs', autocomplete: 'off', 'aria-label': 'Sync key' });
+    const err = h('p', { class: 'error' });
+    const btn = h('button', { class: 'primary', type: 'submit' }, 'Connect');
+    box.append(h('form', { onsubmit: async (e: Event) => {
+      e.preventDefault();
+      err.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Connecting…';
+      try {
+        await syncer.connect(url.value, key.value);
+        host.toast('Sync connected');
+        render();
+      } catch (ex) {
+        err.textContent = ex instanceof Error ? ex.message : String(ex);
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+      }
+    } },
+      h('p', { class: 'hint' }, 'Deploy apps-script/Code.gs from the repo as a Google Apps Script web app, then enter its URL and your SYNC_KEY here on each device.'),
+      field('Web app URL', url),
+      field('Sync key', key),
+      err,
+      h('div', { class: 'actions' }, btn)));
+  };
+  const off = syncer.onStatus(() => {
+    if (!box.isConnected) return off();
+    statusEl.textContent = syncStatusText(syncer.status);
+    statusEl.classList.toggle('error', syncer.status.state === 'error');
+  });
+  render();
+  return box;
+}
+
+export function settingsPanel(host: PanelHost, openCategories: () => void, syncer: Syncer): HTMLElement {
   const { store } = host;
   const s = store.settings;
   const seed = h('input', { value: s.seed, inputMode: 'numeric', 'aria-label': 'Seed' });
@@ -318,6 +387,8 @@ export function settingsPanel(host: PanelHost, openCategories: () => void): HTML
   };
 
   return h('div', { class: 'settings' },
+    h('h3', {}, 'Sync across devices'),
+    syncSection(host, syncer),
     h('h3', {}, 'World'),
     field('Seed', seed), seedErr,
     field('Generator version', ver),
@@ -372,4 +443,127 @@ export function toolsPanel(host: PanelHost): HTMLElement {
       h('button', { class: 'primary', onclick: () => host.startMeasure() }, 'New measurement'),
       m && h('button', { onclick: async () => { await store.updateSettings({ measure: null }); host.close(); } }, 'Clear')),
   );
+}
+
+// ---- find biome near me ------------------------------------------------------------
+
+export interface BiomeSearchHost {
+  biomeNames: string[];
+  /** origin choices: map centre, tapped point (if any), reference marker (if any) */
+  origins(): { key: string; label: string; x: number; z: number }[];
+  run(biome: number, y: number, origin: { x: number; z: number }): Promise<SearchResult>;
+  show(hits: SearchHit[], color: string): void;
+  clear(): void;
+  flyTo(x: number, z: number): void;
+  fit(pts: { x: number; z: number }[]): void;
+  addMarkerAt(x: number, z: number): void;
+}
+
+interface SearchState {
+  dim: Dimension;
+  biome: number;
+  y: string;
+  origin: string;
+  result: SearchResult | null;
+  originPt: { x: number; z: number } | null;
+}
+const searchState: SearchState = { dim: 'overworld', biome: -1, y: '', origin: 'centre', result: null, originPt: null };
+
+/** Biome ids whose name matches free text ("cherry", "deep dark", "Warped Forest"). */
+export function matchBiome(names: string[], dim: Dimension, q: string): number | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+  const n = norm(q);
+  if (n.length < 3) return null;
+  const ids = BIOMES_BY_DIM[dim];
+  return ids.find((id) => norm(names[id] ?? '') === n) ?? ids.find((id) => norm(names[id] ?? '').startsWith(n))
+    ?? ids.find((id) => norm(names[id] ?? '').includes(n)) ?? null;
+}
+
+export function biomeSearchPanel(host: PanelHost, bs: BiomeSearchHost, preset?: { biome: number; autorun: boolean }): HTMLElement {
+  const dim = host.store.settings.dim;
+  if (searchState.dim !== dim) Object.assign(searchState, { dim, biome: -1, result: null, originPt: null });
+  if (preset) Object.assign(searchState, { biome: preset.biome, y: '', result: null });
+
+  const ids = [...BIOMES_BY_DIM[dim]].sort((a, b) => prettyBiome(bs.biomeNames[a]).localeCompare(prettyBiome(bs.biomeNames[b])));
+  const biomeSel = h('select', { 'aria-label': 'Biome' },
+    h('option', { value: '-1' }, 'Choose a biome…'),
+    ids.map((id) => h('option', { value: String(id) }, prettyBiome(bs.biomeNames[id]))));
+  biomeSel.value = String(searchState.biome);
+  const yIn = h('input', { type: 'text', inputMode: 'numeric', placeholder: 'surface', value: searchState.y, 'aria-label': 'Y level' });
+  const yField = field('Y level (cave biomes)', yIn);
+  const origins = bs.origins();
+  const originSel = h('select', { 'aria-label': 'Search near' }, origins.map((o) => h('option', { value: o.key }, o.label)));
+  originSel.value = origins.some((o) => o.key === searchState.origin) ? searchState.origin : 'centre';
+  const status = h('p', { class: 'hint' });
+  const results = h('ol', { class: 'hits' });
+  const go = h('button', { class: 'primary', type: 'submit' }, 'Search');
+
+  const syncY = () => {
+    const id = Number(biomeSel.value);
+    const cave = CAVE_BIOME_Y[id];
+    yField.hidden = dim !== 'overworld';
+    yIn.placeholder = cave != null ? String(cave) : 'surface';
+  };
+  biomeSel.addEventListener('change', () => { searchState.biome = Number(biomeSel.value); syncY(); });
+  syncY();
+
+  const color = (id: number) => BIOME_COLORS[id] ?? '#888';
+  const renderResults = () => {
+    results.innerHTML = '';
+    const r = searchState.result;
+    if (!r) return;
+    const name = prettyBiome(bs.biomeNames[searchState.biome]);
+    if (!r.hits.length) {
+      status.textContent = `No ${name} within ${fmtNum(r.searched, 0)} blocks.`;
+      return;
+    }
+    status.textContent = `${r.hits.length} nearest ${name} location${r.hits.length === 1 ? '' : 's'} (searched ${fmtNum(r.searched, 0)} blocks out).`;
+    r.hits.forEach((hit, i) => {
+      const o = toOtherDimension(dim, hit.x, hit.z);
+      results.append(h('li', {},
+        h('button', { class: 'mitem', onclick: () => bs.flyTo(hit.x, hit.z) },
+          h('span', { class: 'hit-num', style: `--c:${color(searchState.biome)}` }, String(i + 1)),
+          h('span', { class: 'mitem-main' },
+            h('span', { class: 'mitem-name' }, `${hit.x}, ${hit.z}`),
+            h('span', { class: 'mitem-sub' }, `${fmtNum(hit.dist, 0)} blocks away${o ? ` · ${DIM_LABEL[o.dim]} ${o.x}, ${o.z}` : ''}`))),
+        h('button', { class: 'small', title: 'Add marker here', onclick: () => bs.addMarkerAt(hit.x, hit.z) }, '+ Marker')));
+    });
+  };
+
+  const run = async (ev?: Event) => {
+    ev?.preventDefault();
+    const id = Number(biomeSel.value);
+    if (id < 0) return (status.textContent = 'Pick a biome first.');
+    const yTxt = yIn.value.trim();
+    if (yTxt && !Number.isInteger(Number(yTxt))) return (status.textContent = 'Y must be a whole number.');
+    const y = dim === 'nether' ? 64 : yTxt ? Number(yTxt) : CAVE_BIOME_Y[id] ?? 256;
+    const origin = origins.find((o) => o.key === originSel.value) ?? origins[0];
+    Object.assign(searchState, { biome: id, y: yTxt, origin: origin.key, originPt: { x: origin.x, z: origin.z } });
+    go.disabled = true;
+    status.textContent = `Searching for ${prettyBiome(bs.biomeNames[id])} near ${origin.x}, ${origin.z}…`;
+    results.innerHTML = '';
+    try {
+      searchState.result = await bs.run(id, y, origin);
+      bs.show(searchState.result.hits, color(id));
+      renderResults();
+      // Show the origin and every result; tapping a result flies to it.
+      if (searchState.result.hits.length) bs.fit([origin, ...searchState.result.hits]);
+    } catch (e) {
+      status.textContent = `Search failed: ${String(e)}`;
+    } finally {
+      go.disabled = false;
+    }
+  };
+
+  const form = h('form', { class: 'bsearch', onsubmit: run },
+    field('Biome', biomeSel),
+    h('div', { class: 'row2' }, field('Near', originSel), yField),
+    h('div', { class: 'actions' }, go,
+      h('button', { type: 'button', onclick: () => { searchState.result = null; bs.clear(); renderResults(); status.textContent = ''; } }, 'Clear')),
+    dim === 'end' && h('p', { class: 'hint' }, 'End zones are Java biomes. In Bedrock all of the End reports as “The End”; the zones still show the main island, the void ring and the outer islands.'),
+    status,
+    results);
+  renderResults();
+  if (preset?.autorun) setTimeout(() => run(), 0);
+  return form;
 }

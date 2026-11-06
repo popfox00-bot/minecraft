@@ -9,13 +9,15 @@
     "preview": "vite preview",
     "test": "vitest run",
     "build:wasm": "bash scripts/build-wasm.sh",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "build:gs": "node scripts/build-gs.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.22",
+    "@types/node": "^22.20.5",
     "fake-indexeddb": "^6.2.7",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
