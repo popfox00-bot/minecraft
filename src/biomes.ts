@@ -68,6 +68,33 @@ export const BIOME_COLORS: Record<number, string> = {
   171: '#b0767a', // crimson_forest
   172: '#6f9c97', // warped_forest
   173: '#8c8a8e', // basalt_deltas
+  // end (Java zones; Bedrock reports all of these as "The End")
+  9: '#d6d2b4', // the_end (main island)
+  40: '#77748a', // small_end_islands (mostly void)
+  41: '#c9c5a8', // end_midlands
+  42: '#d8d4b6', // end_highlands
+  43: '#b3af98', // end_barrens
+};
+
+import type { Dimension } from './coords';
+
+const NETHER_IDS = [8, 170, 171, 172, 173];
+const END_IDS = [9, 40, 41, 42, 43];
+
+/** Biome ids that generate in each dimension (for the biome search picker). */
+export const BIOMES_BY_DIM: Record<Dimension, number[]> = {
+  overworld: Object.keys(BIOME_COLORS)
+    .map(Number)
+    .filter((id) => !NETHER_IDS.includes(id) && !END_IDS.includes(id)),
+  nether: NETHER_IDS,
+  end: END_IDS,
+};
+
+/** Underground biomes: searched at a Y level instead of the surface. */
+export const CAVE_BIOME_Y: Record<number, number> = {
+  174: 0, // dripstone_caves
+  175: 0, // lush_caves
+  183: -40, // deep_dark
 };
 
 export const UNKNOWN_COLOR = '#d0d0d0';

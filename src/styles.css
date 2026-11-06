@@ -230,8 +230,11 @@ button.danger { color: var(--danger); }
 @media (max-width: 759px) {
   .topbar { gap: 4px; }
   .top-actions { gap: 4px; margin-left: auto; }
-  .tab { padding: 0 9px; }
-  .goto { order: 10; flex-basis: 100%; }
+  .tab { padding: 0 10px; }
+  /* row 1: list + actions, row 2: dimension tabs + go-to box */
+  .top-actions { order: 1; margin-left: auto; }
+  .tabs { order: 2; }
+  .goto { order: 3; flex: 1 1 120px; }
   .legend { right: 60px; max-width: 200px; }
   .readout { max-width: calc(100% - 16px); bottom: calc(max(8px, env(safe-area-inset-bottom)) + 48px); }
 }
@@ -243,3 +246,22 @@ button.danger { color: var(--danger); }
   .sheet-open .leaflet-right { right: 360px; }
   .legend, .leaflet-right { transition: right .18s ease-out; }
 }
+
+/* ---- biome search ---- */
+.hit {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--panel); color: var(--text); font-size: 12px; font-weight: 700;
+  border: 3px solid var(--c); box-shadow: 0 0 0 1px var(--measure);
+}
+.hit-wrap { display: grid; place-items: center; }
+.hits { list-style: none; margin: 0; padding: 0; }
+.hits li { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
+.hits .mitem { border-bottom: 0; flex: 1; min-width: 0; }
+.hit-num {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; border: 3px solid var(--c); background: var(--panel);
+}
+
+/* ---- sync ---- */
+.sync-status.error, .legend-foot.sync-error { color: var(--danger); }
+.legend .legend-foot.sync-ok, .legend .legend-foot.sync-syncing, .legend .legend-foot.sync-error { display: block; }

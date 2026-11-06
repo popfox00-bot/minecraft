@@ -18,6 +18,8 @@ export interface Marker {
   createdAt: string;
   /** Show this marker's linked portal position in the other dimension. */
   showLinked: boolean;
+  /** ISO timestamp of the last edit (sync metadata; absent in export files) */
+  updatedAt?: string;
 }
 
 export interface Category {
@@ -27,6 +29,8 @@ export interface Category {
   icon: IconName;
   visible: boolean;
   order: number;
+  /** ISO timestamp of the last edit (sync metadata; absent in export files) */
+  updatedAt?: string;
 }
 
 export interface MeasurePoint {
@@ -53,6 +57,8 @@ export interface Settings {
   dim: Dimension;
   measure: Measure | null;
   view: { x: number; z: number; zoom: number } | null;
+  /** when seed/version last changed (they sync across devices) */
+  sharedUpdatedAt: string;
 }
 
 export const DEFAULT_SEED = '-2829401596156382806';
@@ -67,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dim: 'overworld',
   measure: null,
   view: null,
+  sharedUpdatedAt: '',
 };
 
 /** cubiomes MCVersion values for the 1.18+ (noise-based, Bedrock-parity) generators. */
@@ -113,34 +120,14 @@ export function newId(): string {
   return crypto.randomUUID();
 }
 
-export function seedMarkers(now = new Date().toISOString()): Marker[] {
+/** Fixed ids/timestamps so every device's first-run markers are the same records (sync merges them). */
+const SEED_STAMP = '2026-11-05T00:00:00.000Z';
+
+export function seedMarkers(): Marker[] {
+  const base = { categoryId: 'spawner', dim: 'overworld' as const, notes: '', status: 'found' as const, createdAt: SEED_STAMP, updatedAt: SEED_STAMP, showLinked: false };
   return [
-    {
-      id: newId(),
-      name: 'Dungeon A',
-      categoryId: 'spawner',
-      x: 1180,
-      y: -5,
-      z: -2808,
-      dim: 'overworld',
-      notes: '',
-      status: 'found',
-      createdAt: now,
-      showLinked: false,
-    },
-    {
-      id: newId(),
-      name: 'Dungeon B',
-      categoryId: 'spawner',
-      x: 1204,
-      y: -1,
-      z: -2807,
-      dim: 'overworld',
-      notes: '',
-      status: 'found',
-      createdAt: now,
-      showLinked: false,
-    },
+    { ...base, id: 'seed-dungeon-a', name: 'Dungeon A', x: 1180, y: -5, z: -2808 },
+    { ...base, id: 'seed-dungeon-b', name: 'Dungeon B', x: 1204, y: -1, z: -2807 },
   ];
 }
 

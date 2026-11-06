@@ -8,7 +8,7 @@
     "noUnusedLocals": true,
     "skipLibCheck": true,
     "allowJs": false,
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "isolatedModules": true,
     "noEmit": true
   },

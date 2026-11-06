@@ -6,7 +6,7 @@ A personal map and location tracker for **one** Minecraft Bedrock world. It work
 - Static site: Vite + TypeScript + Leaflet (`L.CRS.Simple`, 1 map unit = 1 block, north/−Z up, +X right)
 - Biomes: [cubiomes](https://github.com/Cubitect/cubiomes) compiled to WebAssembly, running in a pool of Web Workers. The map labels this **"Biomes: Java-parity generator"**.
 - Storage: IndexedDB for markers, categories, settings and cached biome tiles. JSON export/import for backups.
-- No backend.
+- Optional cross-device sync through your own Google Apps Script web app (`apps-script/Code.gs`). There is no other backend.
 
 ## Quick start
 
@@ -75,13 +75,40 @@ cubiomes is vendored in `vendor/cubiomes/` (MIT, commit in `vendor/cubiomes/COMM
 
 `vite.config.ts` uses `base: './'`, so the build works from any path.
 
+## Cross-device sync (Google Apps Script)
+
+Markers are saved in each browser. To share them between your phone, tablet and computer, deploy the small backend in `apps-script/Code.gs`. It runs as a Google Apps Script web app in your own Google account and stores one JSON file in your Drive.
+
+1. Go to [script.google.com](https://script.google.com) → **New project**. Replace the contents of `Code.gs` with [`apps-script/Code.gs`](apps-script/Code.gs).
+2. Change `SYNC_KEY` at the top to a long random string. It works as the password.
+3. **Deploy → New deployment → Web app.** Set *Execute as: Me* and *Who has access: Anyone*. Authorize the Drive access when asked.
+4. Copy the web app URL (it ends in `/exec`).
+5. In WorldAtlas, open **Settings → Sync across devices**, paste the URL and `SYNC_KEY`, then press **Connect**. Do this on each device.
+
+After that, every add, edit and delete syncs automatically: about 1.5 s after a change, when the app regains focus, and every minute while it is open.
+
+How it works:
+- Each marker and category carries an `updatedAt` time. Deletions are kept as tombstones.
+- The backend merges under a script lock and keeps the newest version of each record, so devices converge no matter who syncs first.
+- The seed and generator version sync too. Theme, grid toggles and map position stay per device.
+- The first-run Dungeon A/B markers have fixed IDs, so they are not duplicated across devices.
+- Importing a JSON backup counts as a fresh edit, so the restore also wins on the other devices.
+
+If you edit the backend later:
+- Edit `apps-script/Code.template.gs` or `src/sync/merge.js`, run `npm run build:gs`, and paste the new `Code.gs`.
+- Then use **Deploy → Manage deployments → Edit → New version** so the URL stays the same.
+- A unit test fails if `Code.gs` is out of date with the app's merge code.
+
 ## Features (phase 1)
 
 - **Map:** muted biome palette. A faint chunk grid (16 blocks, from zoom +1) and region grid (512 blocks, from zoom −2) show only when zoomed in. The cursor/tap readout shows X, Z, biome, chunk and the 1:8 position in the other dimension. The "Go to" box takes `X, Z`, `X Y Z` or a marker name. Zoom runs from −6 (1 px = 64 blocks) to +5 (32 px/block).
-- **Dimensions:** Overworld and Nether tabs. Switching tabs converts the view position 1:8. Each marker belongs to one dimension. A marker can show its *linked portal position* (dashed ghost marker) in the other dimension.
+- **Dimensions:** Overworld, Nether and End tabs. Switching tabs converts the view position 1:8. Each marker belongs to one dimension. A marker can show its *linked portal position* (dashed ghost marker) in the other dimension.
 - **Markers:** add one by tapping the map and pressing "+ Add marker at X, Z", by using the + button (map centre), or by typing coordinates in the form. Fields: name, category, X, Y (optional), Z, dimension, notes, status (planned / found / built / looted), created date.
 - **Categories:** you can edit the name, colour and icon (18 built-in glyphs), add new ones, and delete them (their markers move to another category). The compact legend toggles visibility per category.
 - **List:** search, filter by category, status and dimension, and sort by distance from a reference point. The reference is your Base marker by default; you can also pick any marker or the map centre. Tapping an item flies the map to it.
+- **Find biome near me:** the magnifier button, or type a biome name into the Go-to box (e.g. `cherry grove`, `deep dark`). It lists the 8 nearest separate patches of that biome around the map centre, the tapped point or your reference marker. Each result has coordinates, distance and the linked Nether position. Results show as numbered pins on the map; tap one to fly there, or press **+ Marker** to save it.
+  - Search is done in a worker at 1:16 resolution, nearest rings first, up to 12,000 blocks (6,000 in the Nether and End). Each hit is then refined to a 1:4 cell inside the biome.
+  - Cave biomes (lush caves, dripstone caves, deep dark) are searched underground, at Y 0 or Y −40 by default; you can change the Y.
 - **Tools:** 1:8 converter, and a measure tool. Tap two points, or tap markers to include their Y. It shows the 3D distance, the horizontal distance and the Nether travel equivalent.
 - **Settings:** seed, generator version, theme (system/light/dark), grid toggles, JSON export/import, clear tile cache, category editor.
 
@@ -143,6 +170,7 @@ npm run e2e -- http://localhost:4173/
 
 - **Bedrock structures are not predicted.** cubiomes' structure placement is Java-only and wrong for Bedrock, so it is not compiled in. Villages, strongholds, monuments and so on come only from markers you add.
 - **Biomes come from a Java-parity generator.** Bedrock and Java have shared biome generation since 1.18. The newest version cubiomes supports is Java **1.21.4 (Winter Drop, pale garden)**. As far as I know, no later version has changed biome generation, but that is not verified. If a later update adds or moves biomes, the map will be wrong until cubiomes is updated.
+- **End biomes are Java's.** Bedrock has a single End biome, so in-game F3 always says "The End". The End tab shows Java's End zones (main island, small end islands, midlands, highlands, barrens) from cubiomes. They still outline the central island, the void ring and where the outer islands are, but that layout is unverified for Bedrock. End markers have no linked dimension.
 - **Nether biomes are not verified against Bedrock.** They use cubiomes' Java Nether generator. I have not confirmed that Bedrock's Nether biome layout matches Java's for the same seed, so check them in-game.
 - **The surface map is 2D.** It is sampled at Y 256. In-game F3 reports the biome at your feet, which underground can be a cave biome. Use `getBiome` with `y` to compare.
 - **Text seeds are not supported.** Seeds must be numeric 64-bit values.
@@ -162,6 +190,9 @@ src/wasm/cubiomes.js  built module (committed)
 src/gen/              worker, worker pool client, generator wrapper
 src/map/              Leaflet view, biome tile layer, grid layer, tile cache
 src/ui/panels.ts      list, marker form, categories, settings, tools
+src/gen/search.ts     biome search (nearest patches)
+src/sync/             merge (shared with Code.gs) + Apps Script client
+apps-script/          Code.gs backend (generated from Code.template.gs)
 src/coords.ts         coordinate maths (unit-tested)
 src/store.ts          state, IndexedDB persistence, export/import
 tests/                vitest unit tests

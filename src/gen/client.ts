@@ -4,6 +4,7 @@
 
 import type { Dimension } from '../coords';
 import type { WorkerRequest, WorkerResponse } from './protocol';
+import type { SearchOptions, SearchResult } from './search';
 
 type Req = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
 
@@ -114,6 +115,12 @@ export class BiomeClient {
     const r = await this.run({ type: 'area', seed, mc, dim, scale, cx, cz, cells }, priority, signal);
     if (!('ids' in r)) throw new Error('bad response');
     return r.ids;
+  }
+
+  async search(seed: string, mc: number, dim: Dimension, opts: SearchOptions): Promise<SearchResult> {
+    const r = await this.run({ type: 'search', seed, mc, dim, opts }, 50);
+    if (!('search' in r)) throw new Error('bad response');
+    return r.search;
   }
 
   get queued(): number {

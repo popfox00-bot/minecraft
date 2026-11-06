@@ -3,11 +3,12 @@ import './styles.css';
 
 import { BiomeClient } from './gen/client';
 import { Store } from './store';
+import { Syncer } from './sync/syncer';
 import { MapView, formatMeasure } from './map/mapView';
 import { clearTileCache } from './map/tileCache';
 import { h } from './dom';
-import { chunkOf, parseCoords, toOtherDimension, type Dimension } from './coords';
-import { prettyBiome } from './biomes';
+import { chunkOf, parseCoords, toOtherDimension, DIMENSIONS, DIM_LABEL, type Dimension } from './coords';
+import { prettyBiome, BIOMES_BY_DIM } from './biomes';
 import type { Marker } from './model';
 import {
   blankMarker,
@@ -17,6 +18,10 @@ import {
   markerForm,
   settingsPanel,
   toolsPanel,
+  syncStatusText,
+  biomeSearchPanel,
+  matchBiome,
+  type BiomeSearchHost,
   type PanelHost,
 } from './ui/panels';
 
@@ -26,6 +31,7 @@ const ICON = {
   plus: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
   gear: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></svg>',
   swap: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5h10l-2.5-2.5M13 11H3l2.5 2.5"/></svg>',
+  find: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M5.5 6.5l1.5-1.5 1.5 1.5"/></svg>',
   close: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
 };
 
@@ -33,6 +39,7 @@ async function main() {
   const store = new Store();
   await store.load();
   const client = new BiomeClient();
+  const syncer = new Syncer(store);
   await client.ready;
   const mcResolved = () => store.settings.mc || client.newest;
 
@@ -49,8 +56,9 @@ async function main() {
   const app = document.getElementById('app')!;
   const mapEl = h('div', { id: 'map' });
   const dimTabs = h('div', { class: 'tabs', role: 'tablist' });
-  const goto = h('input', { type: 'search', placeholder: 'Go to X, Z or marker', enterKeyHint: 'go', 'aria-label': 'Go to coordinates' });
-  const gotoForm = h('form', { class: 'goto', onsubmit: (e: Event) => { e.preventDefault(); doGoto(goto.value); goto.blur(); } }, goto);
+  const goto = h('input', { type: 'search', placeholder: 'Go to X, Z, marker or biome', enterKeyHint: 'go', 'aria-label': 'Go to coordinates, marker or biome', list: 'goto-suggest' });
+  const suggest = h('datalist', { id: 'goto-suggest' });
+  const gotoForm = h('form', { class: 'goto', onsubmit: (e: Event) => { e.preventDefault(); doGoto(goto.value); goto.blur(); } }, goto, suggest);
   const iconBtn = (label: string, svg: string, onclick: () => void, id?: string) =>
     h('button', { class: 'icon', title: label, 'aria-label': label, html: svg, onclick, id });
   const measureBtn = iconBtn('Measure', ICON.ruler, () => toggleMeasure());
@@ -59,6 +67,7 @@ async function main() {
     dimTabs,
     gotoForm,
     h('div', { class: 'top-actions' },
+      iconBtn('Find biome near me', ICON.find, () => openBiomeSearch()),
       iconBtn('Add marker at map centre', ICON.plus, () => addAt(view.centerBlock())),
       measureBtn,
       iconBtn('Converter & measure', ICON.swap, () => openTools()),
@@ -129,7 +138,7 @@ async function main() {
         what && h('span', { class: 'ro-what' }, what),
         h('strong', {}, `${p.x}, ${p.z}`),
         biomeSpan),
-      h('div', { class: 'ro-sub' }, `Chunk ${ch.x}, ${ch.z} · ${other.dim === 'nether' ? 'Nether' : 'Overworld'} ${other.x}, ${other.z}`),
+      h('div', { class: 'ro-sub' }, `Chunk ${ch.x}, ${ch.z}${other ? ` · ${DIM_LABEL[other.dim]} ${other.x}, ${other.z}` : ''}`),
     );
     // The pinned-point actions only re-render when the pin changes, so the
     // buttons stay stable while the mouse moves over the map.
@@ -154,18 +163,20 @@ async function main() {
   // ---- dimension tabs ----
   function renderTabs() {
     dimTabs.innerHTML = '';
-    for (const d of ['overworld', 'nether'] as Dimension[]) {
+    for (const d of DIMENSIONS) {
       dimTabs.append(h('button', {
         role: 'tab', class: 'tab' + (store.settings.dim === d ? ' on' : ''), 'aria-selected': String(store.settings.dim === d),
         onclick: () => switchDim(d),
-      }, d === 'overworld' ? 'Overworld' : 'Nether'));
+      }, DIM_LABEL[d]));
     }
     document.documentElement.dataset.dim = store.settings.dim;
   }
   async function switchDim(d: Dimension, keepPos = false) {
     if (store.settings.dim === d) return;
     const c = view.centerBlock();
-    const o = keepPos ? c : toOtherDimension(store.settings.dim, c.x, c.z);
+    const linked = toOtherDimension(store.settings.dim, c.x, c.z);
+    // Overworld <-> Nether keeps the 1:8 position; the End has no link, so open it at the main island.
+    const o = keepPos ? c : linked && linked.dim === d ? linked : d === 'end' ? { x: 0, z: 0 } : linked ?? c;
     pinned = null;
     view.showPick(null);
     await store.updateSettings({ dim: d });
@@ -193,7 +204,8 @@ async function main() {
       }
       legend.append(list);
     }
-    legend.append(h('div', { class: 'legend-foot' }, 'Biomes: Java-parity generator'));
+    legend.append(h('div', { class: 'legend-foot' }, store.settings.dim === 'end' ? 'Biomes: Java-parity generator (Java End zones)' : 'Biomes: Java-parity generator'));
+    if (syncer.status.state !== 'off') legend.append(h('div', { class: 'legend-foot sync-' + syncer.status.state }, syncStatusText(syncer.status)));
   }
 
   // ---- sheet ----
@@ -225,8 +237,46 @@ async function main() {
     startMeasure: () => { closeSheet(); toggleMeasure(true); },
   };
   const openList = () => openSheet('Markers', listPanel(host));
-  const openSettings = () => openSheet('Settings', settingsPanel(host, () => openSheet('Categories', categoriesPanel(host))));
+  const openSettings = () => openSheet('Settings', settingsPanel(host, () => openSheet('Categories', categoriesPanel(host)), syncer));
   const openTools = () => openSheet('Tools', toolsPanel(host));
+  const biomeHost: BiomeSearchHost = {
+    biomeNames: client.names,
+    origins: () => {
+      const c = view.centerBlock();
+      const out = [{ key: 'centre', label: `Map centre (${c.x}, ${c.z})`, x: c.x, z: c.z }];
+      if (pinned) out.push({ key: 'pinned', label: `Tapped point (${pinned.x}, ${pinned.z})`, x: pinned.x, z: pinned.z });
+      const ref = store.referenceMarker();
+      if (ref && ref.dim === store.settings.dim) out.push({ key: 'ref', label: `${ref.name} (${ref.x}, ${ref.z})`, x: ref.x, z: ref.z });
+      return out;
+    },
+    run: (biome, y, o) =>
+      client.search(store.settings.seed, mcResolved(), store.settings.dim, {
+        biome, x: o.x, z: o.z, y, k: 8, maxRadius: store.settings.dim === 'overworld' ? 12000 : 6000,
+        separation: store.settings.dim === 'nether' ? 128 : 512,
+      }),
+    show: (hits, color) => view.showSearchHits(hits, color, (i) => { const hit = hits[i]; pinned = { x: hit.x, z: hit.z }; view.showPick(pinned); updateReadout(); }),
+    clear: () => view.clearSearchHits(),
+    flyTo: (x, z) => {
+      pinned = { x, z };
+      view.showPick(pinned);
+      view.goTo(x, z, Math.max(view.map.getZoom(), 0));
+      updateReadout();
+      if (matchMedia('(max-width: 759px)').matches) closeSheet();
+    },
+    fit: (pts) => {
+      // keep the pins clear of the top bar and the open panel
+      const phone = matchMedia('(max-width: 759px)').matches;
+      view.fitPoints(pts, [0, topbar.offsetHeight], phone ? [0, sheet.offsetHeight] : [sheet.offsetWidth, 0]);
+    },
+    addMarkerAt: (x, z) => addAt({ x, z }),
+  };
+  const openBiomeSearch = (preset?: { biome: number; autorun: boolean }) =>
+    openSheet('Find biome', biomeSearchPanel(host, biomeHost, preset));
+  function renderSuggestions() {
+    suggest.innerHTML = '';
+    for (const m of store.markers.filter((m) => m.dim === store.settings.dim)) suggest.append(h('option', { value: m.name }));
+    for (const id of BIOMES_BY_DIM[store.settings.dim]) suggest.append(h('option', { value: prettyBiome(client.names[id]) }));
+  }
   const openMarker = (m: Marker, isNew: boolean) => openSheet(isNew ? 'New marker' : m.name, markerForm(host, m, isNew));
   function addAt(p: { x: number; z: number }) {
     openMarker(blankMarker(host, p.x, p.z, store.settings.dim), true);
@@ -260,9 +310,11 @@ async function main() {
       return;
     }
     const needle = q.trim().toLowerCase();
-    const m = needle && store.markers.find((m) => m.name.toLowerCase().includes(needle));
-    if (m) flyToMarker(m);
-    else toast('Type coordinates like “1180, -2808” or a marker name');
+    const m = needle && store.markers.find((m) => m.name.toLowerCase() === needle) || store.markers.find((m) => needle && m.name.toLowerCase().includes(needle));
+    if (m) return void flyToMarker(m);
+    const b = matchBiome(client.names, store.settings.dim, q);
+    if (b != null) return void openBiomeSearch({ biome: b, autorun: true });
+    toast('Type coordinates like “1180, -2808”, a marker or a biome name');
   }
 
   // ---- store wiring ----
@@ -272,12 +324,13 @@ async function main() {
       const s = store.settings;
       applyTheme();
       const src = `${s.seed}|${mcResolved()}|${s.dim}`;
-      if (src !== lastSrc) { lastSrc = src; view.refreshSource(); view.renderMarkers(); renderTabs(); renderLegend(); updateReadout(); }
+      if (src !== lastSrc) { lastSrc = src; view.refreshSource(); view.renderMarkers(); renderTabs(); renderLegend(); renderSuggestions(); view.clearSearchHits(); updateReadout(); }
       view.refreshGrid();
       view.renderMeasure();
     } else {
       view.renderMarkers();
       renderLegend();
+      renderSuggestions();
       if (current === 'Markers') openList();
     }
   });
@@ -285,6 +338,7 @@ async function main() {
 
   renderTabs();
   renderLegend();
+  renderSuggestions();
   view.renderMarkers();
   view.renderMeasure();
   updateReadout();
@@ -306,6 +360,14 @@ async function main() {
   ]);
   console.info('[WorldAtlas] biome spot checks (Java-parity generator):');
   for (const c of checks) console.info(`  ${c.x}, ${c.z} @ y=${c.y}: ${c.name}`);
+  let lastSyncErr = '';
+  syncer.onStatus((s) => {
+    renderLegend();
+    if (s.state === 'error' && s.error !== lastSyncErr) toast(`Sync failed: ${s.error}`);
+    lastSyncErr = s.state === 'error' ? s.error ?? '' : '';
+  });
+  await syncer.start();
+  Object.assign(window, { worldatlas: { store, view, client, formatMeasure, syncer } });
   document.documentElement.dataset.ready = '1';
 }
 
