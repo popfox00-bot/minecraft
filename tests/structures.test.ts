@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mtFirst, regionSeed, seedVariants, candidateChunk, candidateBlock, regionOfBlock, spawnBox,
-  coreBox, checkFind, assess, chanceMatch, END_CITY,
+  coreBox, checkFind, assess, chanceMatch, END_CITY, NETHER_COMPLEX,
 } from '../src/structures/bedrock';
 
 const SEED = '-2829401596156382806';
@@ -91,5 +91,39 @@ describe('verification', () => {
     const b = spawnBox(END_CITY, 0, 0);
     const a = assess(END_CITY, SEED, [{ id: 'g', x: b.x1 + 80, z: b.z1 + 80 }]);
     expect(a.gridOk).toBe(false);
+  });
+});
+
+// Real finds reported in-game on this seed (Bedrock). These pin the formulas
+// to observed reality: if a refactor breaks placement, these fail.
+describe('real finds on -2829401596156382806', () => {
+  it('End Cities 426,1327 and 1642,1983 match the low-32 End City formula', () => {
+    const finds = [{ id: 'a', x: 426, z: 1327 }, { id: 'b', x: 1642, z: 1983 }];
+    const a = assess(END_CITY, SEED, finds);
+    expect(a.best?.variant.id).toBe('low32');
+    expect(a.confidence).toBe('likely');
+    const low = seedVariants(SEED)[0].seed32;
+    expect(candidateBlock(END_CITY, low, 1, 4)).toEqual({ x: 424, z: 1320 });
+  });
+
+  it('fortress 155,-340 and bastion -184,-104 match the Nether formula with the right types', () => {
+    const finds = [
+      { id: 'f', x: 155, z: -340, type: 'fortress' },
+      { id: 'b', x: -184, z: -104, type: 'bastion' },
+    ];
+    const a = assess(NETHER_COMPLEX, SEED, finds);
+    expect(a.best?.variant.id).toBe('low32');
+    expect(a.best?.matches).toBe(2);
+    expect(a.best?.checks.map((c) => c.predicted)).toEqual([
+      { x: 152, z: -328, type: 'fortress' },
+      { x: -184, z: -104, type: 'bastion' },
+    ]);
+    console.log('nether: confidence', a.confidence, 'coincidence 1 in', Math.round(1 / a.coincidence));
+    expect(['likely', 'confirmed']).toContain(a.confidence);
+  });
+
+  it('a find of the wrong type does not match even at the right spot', () => {
+    const a = assess(NETHER_COMPLEX, SEED, [{ id: 'x', x: -184, z: -104, type: 'fortress' }]);
+    expect(a.confidence).toBe('mismatch');
   });
 });

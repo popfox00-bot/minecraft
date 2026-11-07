@@ -14,7 +14,7 @@ describe('store', () => {
     const s = new Store();
     await s.load();
     expect(s.markers.map((m) => m.name).sort()).toEqual(['Dungeon A', 'Dungeon B']);
-    expect(s.categories).toHaveLength(12);
+    expect(s.categories).toHaveLength(14);
     expect(s.settings.measure).not.toBeNull();
     _resetDbForTests();
     const again = new Store();

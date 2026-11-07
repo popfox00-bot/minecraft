@@ -169,7 +169,9 @@ await page.screenshot({ path: path.join(os.tmpdir(), 'wa-biome-search.png') });
 
 // 7b. Suggested End Cities: boxes first, predictions unlock as finds match
 await page.locator('.sheet-head button').click().catch(() => {});
-await page.getByRole('button', { name: 'Suggested End Cities' }).click();
+await page.getByRole('button', { name: 'Suggested structures' }).click();
+await page.waitForSelector('.struct-card');
+await page.getByRole('tab', { name: 'End Cities' }).click();
 await page.waitForSelector('.struct-card');
 const s0 = await page.evaluate(() => ({ dim: worldatlas.store.settings.dim, conf: worldatlas.structState().assessment.confidence, kind: document.querySelector('.structs .hits .mitem-sub')?.textContent }));
 check('End City panel starts with search boxes only', s0.dim === 'end' && s0.conf === 'none' && /search box/.test(s0.kind ?? ''), JSON.stringify(s0));
@@ -208,6 +210,38 @@ const s5 = await page.evaluate(async () => {
   return { conf: st.assessment.confidence, pins: !!st.pinVariant };
 });
 check('a find that no formula predicts hides exact pins', (s5.conf === 'mismatch' && !s5.pins) || s5.conf !== 'confirmed', JSON.stringify(s5));
+
+// 7c. Nether: the user's real finds (fortress 155,-340 via blaze spawner; bastion -184,-104)
+await page.getByRole('tab', { name: 'Bastions & Fortresses' }).click();
+await page.waitForFunction(() => worldatlas.structState().kind.id === 'nether' && worldatlas.store.settings.dim === 'nether');
+const n0 = await page.evaluate(() => worldatlas.structState().assessment.confidence);
+const n1 = await page.evaluate(async () => {
+  const { store } = worldatlas;
+  const base = { y: 70, dim: 'nether', notes: '', status: 'found', createdAt: new Date().toISOString(), showLinked: false };
+  await store.saveMarker({ ...base, id: 'nf', name: 'Blaze fortress', categoryId: 'nether-fortress', x: 155, z: -340 });
+  await store.saveMarker({ ...base, id: 'nb', name: 'Bastion', categoryId: 'bastion', x: -184, z: -104 });
+  await new Promise((r) => setTimeout(r, 300));
+  const st = worldatlas.structState();
+  return {
+    conf: st.assessment.confidence,
+    variant: st.pinVariant?.id,
+    card: document.querySelector('.struct-card')?.textContent,
+    first: [...document.querySelectorAll('.structs .hits .mitem-sub')].slice(0, 3).map((e) => e.textContent),
+  };
+});
+check('Nether: real fortress + bastion finds match with types', n0 === 'none' && n1.conf === 'likely' && n1.variant === 'low32' && /matches 2 of 2/.test(n1.card ?? ''),
+  `${n0} → ${n1.conf} (${n1.variant})`);
+check('Nether suggestions show type and Overworld portal coords', n1.first.length > 0 && n1.first.every((t) => /Predicted (bastion|fortress) .*Overworld portal/.test(t ?? '')), n1.first[0] ?? '');
+await page.evaluate(() => worldatlas.view.goTo(0, -200, -2, false));
+await page.waitForTimeout(800);
+await page.screenshot({ path: path.join(os.tmpdir(), 'wa-struct-nether.png') });
+// a bastion marker where a fortress is predicted is a type mismatch
+const n2 = await page.evaluate(async () => {
+  await worldatlas.store.saveMarker({ ...worldatlas.store.marker('nf'), categoryId: 'bastion' });
+  await new Promise((r) => setTimeout(r, 300));
+  return worldatlas.structState().assessment.confidence;
+});
+check('Nether: wrong structure type is a mismatch', n2 === 'mismatch', n2);
 
 await browser.close();
 
