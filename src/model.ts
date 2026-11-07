@@ -59,6 +59,11 @@ export interface Settings {
   view: { x: number; z: number; zoom: number } | null;
   /** when seed/version last changed (they sync across devices) */
   sharedUpdatedAt: string;
+  /** structure prediction layers (End tab) */
+  structBoxes: boolean;
+  structPins: boolean;
+  /** show exact predictions even before they match any find */
+  structUnverified: boolean;
 }
 
 export const DEFAULT_SEED = '-2829401596156382806';
@@ -74,6 +79,9 @@ export const DEFAULT_SETTINGS: Settings = {
   measure: null,
   view: null,
   sharedUpdatedAt: '',
+  structBoxes: true,
+  structPins: true,
+  structUnverified: false,
 };
 
 /** cubiomes MCVersion values for the 1.18+ (noise-based, Bedrock-parity) generators. */
@@ -99,6 +107,7 @@ const DEFAULT_CATS: [string, string, IconName][] = [
   ['Mansion', '#6b4f3a', 'tower'],
   ['Farm', '#5c946e', 'wheat'],
   ['Point of Interest', '#e0a100', 'star'],
+  ['End City', '#9b6fb0', 'ship'],
 ];
 
 export function slug(s: string): string {

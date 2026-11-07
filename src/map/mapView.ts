@@ -17,6 +17,11 @@ import type { BiomeClient } from '../gen/client';
 import type { Store } from '../store';
 import type { Marker, Measure, MeasurePoint } from '../model';
 import { iconSvg } from '../icons';
+import { END_CITY, candidateBlock, coreBox, regionsIn, spawnBox } from '../structures/bedrock';
+import { regionKey, regionTooClose, type EndCityState } from '../structures/endCities';
+
+/** Structure boxes/pins are drawn from this zoom up (keeps the count of shapes small). */
+export const STRUCT_MIN_ZOOM = -3;
 import { esc, fmtNum } from '../dom';
 
 export const MIN_ZOOM = -6;
@@ -52,6 +57,9 @@ export class MapView {
   private measureLayer = L.layerGroup();
   private pickLayer = L.layerGroup();
   private searchLayer = L.layerGroup();
+  private structLayer = L.layerGroup();
+  private structRenderer = L.canvas({ padding: 0.2 });
+  private structInput: { state: EndCityState; boxes: boolean; pins: boolean; onTap: (p: { x: number; z: number }) => void } | null = null;
   private markerEls = new Map<string, L.Marker>();
   measuring = false;
   private pendingA: MeasurePoint | null = null;
@@ -88,6 +96,7 @@ export class MapView {
     this.ghostLayer.addTo(this.map);
     this.measureLayer.addTo(this.map);
     this.markerLayer.addTo(this.map);
+    this.structLayer.addTo(this.map);
     this.searchLayer.addTo(this.map);
     this.pickLayer.addTo(this.map);
 
@@ -99,6 +108,7 @@ export class MapView {
     this.map.on('mousemove', (e: L.LeafletMouseEvent) => this.ev.onCursor(latLngToBlockInt(e.latlng)));
     this.map.on('mouseout', () => this.ev.onCursor(null));
     this.map.on('zoomend', () => this.updateLabelClass());
+    this.map.on('moveend', () => this.drawStructures());
     this.updateLabelClass();
   }
 
@@ -242,6 +252,56 @@ export class MapView {
       icon: L.divIcon({ className: 'measure-label', html: `<span>${esc(main)}</span>`, iconSize: [0, 0] }),
       interactive: false,
     }).addTo(this.measureLayer);
+  }
+
+  // ---- structure suggestions (End Cities) -----------------------------------------
+
+  setStructures(input: MapView['structInput']): void {
+    this.structInput = input;
+    this.drawStructures();
+  }
+
+  private drawStructures(): void {
+    this.structLayer.clearLayers();
+    const inp = this.structInput;
+    if (!inp || this.dim !== 'end' || (!inp.boxes && !inp.pins)) return;
+    if (this.map.getZoom() < STRUCT_MIN_ZOOM) return;
+    const b = this.map.getBounds().pad(0.1);
+    const x0 = b.getWest(), x1 = b.getEast(), z0 = -b.getNorth(), z1 = -b.getSouth();
+    const core = coreBox(END_CITY);
+    const r = this.structRenderer;
+    const css = getComputedStyle(document.documentElement);
+    const color = css.getPropertyValue('--struct').trim() || '#9b6fb0';
+    const found = css.getPropertyValue('--struct-found').trim() || '#5c946e';
+    for (const { rx, rz } of regionsIn(END_CITY, x0, z0, x1, z1)) {
+      if (regionTooClose(rx, rz)) continue;
+      const done = inp.state.marked.has(regionKey(rx, rz));
+      const rect = (inset: number) => {
+        const s = spawnBox(END_CITY, rx, rz, inset);
+        return L.latLngBounds([-s.z0, s.x0], [-s.z1, s.x1]);
+      };
+      if (inp.boxes) {
+        L.rectangle(rect(0), { renderer: r, weight: 1, color: done ? found : color, opacity: 0.5, fill: false, dashArray: '4 4', interactive: false }).addTo(this.structLayer);
+        if (!done) L.rectangle(rect(core.inset), { renderer: r, weight: 0, fillColor: color, fillOpacity: 0.12, interactive: false }).addTo(this.structLayer);
+      }
+      if (inp.pins && inp.state.pinVariant && !done) {
+        const p = candidateBlock(END_CITY, inp.state.pinVariant.seed32, rx, rz);
+        L.circleMarker(blockCenterLatLng(p.x, p.z), {
+          renderer: r,
+          radius: 7,
+          weight: 2,
+          color,
+          fillColor: color,
+          fillOpacity: inp.state.unverified ? 0 : 0.35,
+          dashArray: inp.state.unverified || inp.state.assessment.confidence === 'possible' ? '3 3' : undefined,
+        })
+          .on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            inp.onTap(p);
+          })
+          .addTo(this.structLayer);
+      }
+    }
   }
 
   // ---- biome search results ------------------------------------------------------

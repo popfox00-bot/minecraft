@@ -133,6 +133,33 @@ On startup the app also logs the spot checks. Current results for this seed:
 | Dungeon B 1204, −2807 | sparse_jungle | lush_caves (Y −1) |
 | Nether 0, 0 | crimson_forest | — |
 
+## Suggested End Cities (experimental, Bedrock)
+
+The castle button opens the End City panel and switches to the End tab. It is a port of the public Bedrock placement research, trusted only as far as it matches the cities you have found.
+
+- **The grid:**
+  - The End is split into 20×20-chunk regions (320 blocks), and each region holds at most one city, starting somewhere in a 9×9-chunk box in its north-west corner.
+  - The offset is the average of two random draws, so the shaded core box holds the city about 64% of the time.
+  - Regions with an End City marker are shown as done. Regions inside the empty ring around the main island (under 1,000 blocks out) are skipped.
+- **Exact predictions:**
+  - The start chunk in each region comes from Bedrock's RNG (MT19937 seeded with the Java region-seed formula truncated to 32 bits). Sources: MCBEStructureFinder for the End City constants and Bedrockified for the RNG.
+  - It is not known which 32 bits of a 64-bit seed current Bedrock uses, so three variants are tested (low, high, high XOR low).
+- **Learning from your finds:**
+  - Every End City marker in the End with status Found, Built or Looted is checked against each variant. Place the marker at the base of the entrance tower; it matches if it is within 20 blocks.
+  - Pins appear only when one variant matches **every** find. The label comes from the chance that the matches are luck (about 10% per find, times 3 variants):
+
+    | Matching finds | Label | Chance of coincidence |
+    |---|---|---|
+    | 1 | Possible (pins dashed) | about 1 in 3 |
+    | 2–3 | Likely | under 1 in 20 |
+    | 4+ | Confirmed | under 1 in 1,000 |
+
+  - Any find that no variant predicts hides the pins and lists how far off each find is.
+  - A find outside every grid box warns that the grid itself may be wrong.
+  - "Show unverified predictions" draws the low-32 pins before any match, dashed and labelled.
+- **Void hint:** each suggestion says "outer islands" or "likely void" from Java's End zones. Bedrock's islands may differ.
+- **Tip:** "+ Marker" saves a suggestion as a planned End City. When you reach it, move the marker to the entrance tower base and set it to Found; it then counts as evidence.
+
 ## How biome tiles work
 
 - Leaflet zoom 0 = 1 px per block. Each tile is 256 px.
@@ -177,7 +204,8 @@ npm run e2e -- http://localhost:4173/
 
 ## TODO — Phase 2 (not started)
 
-- [ ] Experimental Bedrock structure layer, ported from public research (Earthcomputer's Bedrockified, bedrock-dev/MCBEStructureFinder). Validate it against "found" markers and show a confidence label per structure type.
+- [x] Experimental Bedrock structure layer for **End Cities** (see above).
+- [ ] Same approach for other structures (villages, outposts, monuments, mansions), which also need Bedrock biome checks.
 - [ ] Optional overlay of real explored terrain from tiles exported by a Bedrock renderer (e.g. bedrock-render or PapyrusCS).
 
 ## Layout
@@ -191,6 +219,7 @@ src/gen/              worker, worker pool client, generator wrapper
 src/map/              Leaflet view, biome tile layer, grid layer, tile cache
 src/ui/panels.ts      list, marker form, categories, settings, tools
 src/gen/search.ts     biome search (nearest patches)
+src/structures/       Bedrock placement (MT19937, regions, verification) + End City suggestions
 src/sync/             merge (shared with Code.gs) + Apps Script client
 apps-script/          Code.gs backend (generated from Code.template.gs)
 src/coords.ts         coordinate maths (unit-tested)

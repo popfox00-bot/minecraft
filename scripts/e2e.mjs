@@ -120,7 +120,7 @@ const missing = [];
 for (const d of ['overworld', 'nether']) {
   await page.evaluate((d) => worldatlas.store.updateSettings({ dim: d }), d);
   for (const z of [-6, -4, -2, 0, 2, 5]) {
-    await page.evaluate((z) => worldatlas.view.map.setZoom(z, { animate: false }), z);
+    await page.evaluate((z) => { worldatlas.view.map.setZoom(z, { animate: false }); }, z);
     await page.waitForTimeout(900);
     const n = await page.evaluate(() => document.querySelectorAll('.leaflet-tile-pane .leaflet-layer:first-child canvas.leaflet-tile-loaded').length);
     if (!n) missing.push(`${d}@${z}`);
@@ -138,7 +138,7 @@ check('nether tab switches dimension', dim === 'nether');
 // 6. End tab
 await page.getByRole('tab', { name: 'End' }).click();
 await page.waitForTimeout(500);
-await page.evaluate(() => worldatlas.view.map.setZoom(-3, { animate: false }));
+await page.evaluate(() => { worldatlas.view.map.setZoom(-3, { animate: false }); });
 await page.waitForTimeout(1500);
 const endInfo = await page.evaluate(async () => ({
   dim: worldatlas.store.settings.dim,
@@ -166,6 +166,48 @@ const verified = await page.evaluate(async (list) => {
 check('biome search finds nearest cherry groves', hits.length >= 3 && pins === hits.length && verified >= hits.length - 1,
   `${hits.length} results, ${pins} pins, ${verified} verified at block level; nearest ${hits[0]}`);
 await page.screenshot({ path: path.join(os.tmpdir(), 'wa-biome-search.png') });
+
+// 7b. Suggested End Cities: boxes first, predictions unlock as finds match
+await page.locator('.sheet-head button').click().catch(() => {});
+await page.getByRole('button', { name: 'Suggested End Cities' }).click();
+await page.waitForSelector('.struct-card');
+const s0 = await page.evaluate(() => ({ dim: worldatlas.store.settings.dim, conf: worldatlas.structState().assessment.confidence, kind: document.querySelector('.structs .hits .mitem-sub')?.textContent }));
+check('End City panel starts with search boxes only', s0.dim === 'end' && s0.conf === 'none' && /search box/.test(s0.kind ?? ''), JSON.stringify(s0));
+await page.screenshot({ path: path.join(os.tmpdir(), 'wa-struct-none.png') });
+// pretend the formula is right: place finds near low-32 predictions (as a player would, a few blocks off)
+const addFinds = (regions) => page.evaluate(async (regions) => {
+  const { bedrock, store } = worldatlas;
+  const v = bedrock.seedVariants(store.settings.seed)[0];
+  for (const [i, [rx, rz]] of regions.entries()) {
+    const p = bedrock.candidateBlock(bedrock.END_CITY, v.seed32, rx, rz);
+    await store.saveMarker({ id: `ec-${rx}-${rz}`, name: `City ${rx},${rz}`, categoryId: 'end-city', x: p.x + 6, y: 70, z: p.z - 4, dim: 'end', notes: '', status: 'found', createdAt: new Date().toISOString(), showLinked: false });
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  const st = worldatlas.structState();
+  return { conf: st.assessment.confidence, pins: !!st.pinVariant, card: document.querySelector('.struct-card')?.textContent };
+}, regions);
+const s1 = await addFinds([[4, 1]]);
+const s2 = await addFinds([[-4, 3]]);
+const s4 = await addFinds([[5, -5], [-3, -6]]);
+check('confidence grows with matching finds (1 → possible, 2 → likely, 4 → confirmed)',
+  s1.conf === 'possible' && s2.conf === 'likely' && s4.conf === 'confirmed' && s4.pins && /matches 4 of 4/.test(s4.card ?? ''),
+  `${s1.conf} → ${s2.conf} → ${s4.conf}`);
+await page.evaluate(() => worldatlas.view.goTo(1600, 500, -1, false));
+await page.waitForTimeout(800);
+await page.screenshot({ path: path.join(os.tmpdir(), 'wa-struct-confirmed.png') });
+// a find in the right grid box but nowhere near the prediction breaks the match
+const s5 = await page.evaluate(async () => {
+  const { bedrock, store } = worldatlas;
+  const v = bedrock.seedVariants(store.settings.seed)[0];
+  const p = bedrock.candidateBlock(bedrock.END_CITY, v.seed32, 6, 6);
+  const b = bedrock.spawnBox(bedrock.END_CITY, 6, 6);
+  const x = p.x - b.x0 > 72 ? b.x0 + 4 : b.x1 - 4, z = p.z - b.z0 > 72 ? b.z0 + 4 : b.z1 - 4;
+  await store.saveMarker({ id: 'ec-bad', name: 'Odd city', categoryId: 'end-city', x, y: 70, z, dim: 'end', notes: '', status: 'found', createdAt: new Date().toISOString(), showLinked: false });
+  await new Promise((r) => setTimeout(r, 200));
+  const st = worldatlas.structState();
+  return { conf: st.assessment.confidence, pins: !!st.pinVariant };
+});
+check('a find that no formula predicts hides exact pins', (s5.conf === 'mismatch' && !s5.pins) || s5.conf !== 'confirmed', JSON.stringify(s5));
 
 await browser.close();
 

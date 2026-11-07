@@ -4,6 +4,9 @@ import './styles.css';
 import { BiomeClient } from './gen/client';
 import { Store } from './store';
 import { Syncer } from './sync/syncer';
+import { endCityState, END_CITY_CATEGORY } from './structures/endCities';
+import { structuresPanel, type StructuresHost } from './ui/structures';
+import * as bedrock from './structures/bedrock';
 import { MapView, formatMeasure } from './map/mapView';
 import { clearTileCache } from './map/tileCache';
 import { h } from './dom';
@@ -32,6 +35,7 @@ const ICON = {
   gear: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></svg>',
   swap: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5h10l-2.5-2.5M13 11H3l2.5 2.5"/></svg>',
   find: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M5.5 6.5l1.5-1.5 1.5 1.5"/></svg>',
+  castle: '<svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 14V6h2v1.5h1.5V6h3v1.5H11V6h2v8zM6.5 14v-3h3v3M8 6V2.5l2.5 1L8 4.5"/></svg>',
   close: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
 };
 
@@ -68,6 +72,7 @@ async function main() {
     gotoForm,
     h('div', { class: 'top-actions' },
       iconBtn('Find biome near me', ICON.find, () => openBiomeSearch()),
+      iconBtn('Suggested End Cities', ICON.castle, () => openStructures()),
       iconBtn('Add marker at map centre', ICON.plus, () => addAt(view.centerBlock())),
       measureBtn,
       iconBtn('Converter & measure', ICON.swap, () => openTools()),
@@ -272,6 +277,50 @@ async function main() {
   };
   const openBiomeSearch = (preset?: { biome: number; autorun: boolean }) =>
     openSheet('Find biome', biomeSearchPanel(host, biomeHost, preset));
+  // ---- End City suggestions ----
+  let structState = endCityState(store.settings.seed, store.markers, store.settings.structUnverified);
+  let structKey = '';
+  function refreshStructures() {
+    // only seed, the layer toggles and End City markers affect predictions
+    const st = store.settings;
+    const key = [st.seed, st.dim, st.structBoxes, st.structPins, st.structUnverified,
+      ...store.markers.filter((m) => m.categoryId === END_CITY_CATEGORY).map((m) => `${m.id}:${m.x}:${m.z}:${m.dim}:${m.status}`)].join('|');
+    if (key === structKey) return;
+    structKey = key;
+    structState = endCityState(store.settings.seed, store.markers, store.settings.structUnverified);
+    view.setStructures({
+      state: structState,
+      boxes: store.settings.structBoxes,
+      pins: store.settings.structPins,
+      onTap: (p) => { pinned = p; view.showPick(p); updateReadout(); },
+    });
+    if (current === 'Suggested End Cities') openStructures(false);
+  }
+  const structHost: StructuresHost = {
+    store,
+    state: () => structState,
+    origin: () => {
+      if (store.settings.dim !== 'end') return { x: 0, z: 0, label: 'the main island' };
+      const c = view.centerBlock();
+      return { x: c.x, z: c.z, label: `map centre (${c.x}, ${c.z})` };
+    },
+    flyTo: (x, z) => biomeHost.flyTo(x, z),
+    addPlanned: (sg) => {
+      const m = blankMarker(host, sg.x, sg.z, 'end');
+      openMarker({ ...m, name: 'End City (suggested)', categoryId: END_CITY_CATEGORY, status: 'planned' }, true);
+    },
+    editMarker: (m) => { if (m.dim !== store.settings.dim) void switchDim(m.dim, true); view.goTo(m.x, m.z); openMarker(m, false); },
+    zoneAt: async (x, z) => client.names[await client.biomeAt(store.settings.seed, mcResolved(), 'end', x, z)] ?? '',
+  };
+  async function openStructures(switchToEnd = true) {
+    if (switchToEnd && store.settings.dim !== 'end') {
+      await switchDim('end');
+      // far enough out to see the empty ring and the first grid boxes
+      view.map.setZoom(-3, { animate: false });
+    }
+    openSheet('Suggested End Cities', structuresPanel(structHost));
+  }
+
   function renderSuggestions() {
     suggest.innerHTML = '';
     for (const m of store.markers.filter((m) => m.dim === store.settings.dim)) suggest.append(h('option', { value: m.name }));
@@ -327,10 +376,12 @@ async function main() {
       if (src !== lastSrc) { lastSrc = src; view.refreshSource(); view.renderMarkers(); renderTabs(); renderLegend(); renderSuggestions(); view.clearSearchHits(); updateReadout(); }
       view.refreshGrid();
       view.renderMeasure();
+      refreshStructures();
     } else {
       view.renderMarkers();
       renderLegend();
       renderSuggestions();
+      refreshStructures();
       if (current === 'Markers') openList();
     }
   });
@@ -339,6 +390,7 @@ async function main() {
   renderTabs();
   renderLegend();
   renderSuggestions();
+  refreshStructures();
   view.renderMarkers();
   view.renderMeasure();
   updateReadout();
@@ -367,7 +419,7 @@ async function main() {
     lastSyncErr = s.state === 'error' ? s.error ?? '' : '';
   });
   await syncer.start();
-  Object.assign(window, { worldatlas: { store, view, client, formatMeasure, syncer } });
+  Object.assign(window, { worldatlas: { store, view, client, formatMeasure, syncer, bedrock, structState: () => structState } });
   document.documentElement.dataset.ready = '1';
 }
 
