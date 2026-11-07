@@ -177,7 +177,7 @@ button.icon.on { background: var(--accent); color: var(--accent-text); border-co
 .check { display: flex; gap: 10px; align-items: center; min-height: var(--tap); cursor: pointer; }
 .check input { width: 20px; height: 20px; accent-color: var(--accent); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
-.sheet button:not(.icon):not(.mitem):not(.icon-btn), .readout button, .banner button {
+.sheet button:not(.icon):not(.mitem):not(.icon-btn):not(.find-row), .readout button, .banner button {
   min-height: var(--tap); padding: 0 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); cursor: pointer;
 }
 .readout button.small, .banner button.small, .sheet button.small { min-height: 36px; padding: 0 10px; }
@@ -265,3 +265,22 @@ button.danger { color: var(--danger); }
 /* ---- sync ---- */
 .sync-status.error, .legend-foot.sync-error { color: var(--danger); }
 .legend .legend-foot.sync-ok, .legend .legend-foot.sync-syncing, .legend .legend-foot.sync-error { display: block; }
+
+/* ---- structure suggestions ---- */
+:root { --struct: #6f3f91; --struct-found: #3f7a50; }
+:root[data-theme='dark'] { --struct: #c39be0; --struct-found: #7cc191; }
+.struct-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.struct-card .big { font-size: 16px; font-weight: 600; }
+.struct-card.warn { border-color: var(--danger); }
+.conf { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; }
+.conf-confirmed { color: var(--struct-found); }
+.conf-likely, .conf-possible { color: var(--struct); }
+.conf-mismatch { color: var(--danger); }
+.conf-none { color: var(--muted); }
+.zone-void { color: var(--muted); font-style: italic; }
+.sheet button.find-row {
+  display: flex; gap: 8px; align-items: baseline; width: 100%; min-height: 36px; padding: 6px 4px; text-align: left;
+  border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.find-mark { color: var(--struct-found); font-weight: 700; }
+.find-row.miss .find-mark { color: var(--danger); }

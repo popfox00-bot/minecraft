@@ -75,6 +75,7 @@ export class Store {
     this.settings = { ...DEFAULT_SETTINGS, ...(s ?? {}) };
     this.tombstones = (await db.get<Tombstones>('kv', 'tombstones')) ?? { markers: {}, categories: {} };
     await this.migrateSeedIds();
+    await this.addNewDefaultCategories();
   }
 
   /**
@@ -96,6 +97,24 @@ export class Store {
       changed = true;
     }
     if (changed) await db.put('kv', this.settings, 'settings');
+  }
+
+  /**
+   * Adds default categories introduced after this device first ran (e.g. End
+   * City), once. Stamped with an empty time so a synced edit always wins.
+   */
+  private async addNewDefaultCategories(): Promise<void> {
+    const added = (await db.get<string[]>('kv', 'defaultCatsAdded')) ?? [];
+    let order = Math.max(-1, ...this.categories.map((c) => c.order)) + 1;
+    for (const c of defaultCategories()) {
+      if (added.includes(c.id)) continue;
+      added.push(c.id);
+      if (this.category(c.id) || this.tombstones.categories[c.id]) continue;
+      const cat = { ...c, order: order++ };
+      this.categories.push(cat);
+      await db.put('categories', cat);
+    }
+    await db.put('kv', added, 'defaultCatsAdded');
   }
 
   private async saveTombstones(): Promise<void> {
