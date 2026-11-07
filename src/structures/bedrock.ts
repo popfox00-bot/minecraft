@@ -52,6 +52,12 @@ export interface PlacementConfig {
   triangular: boolean;
   /** placement point inside the start chunk */
   blockOffset: number;
+  /** blocks between a found marker and a prediction that still count as a match */
+  tolerance: number;
+  /** structure type from the region's RNG draws (structures sharing one grid) */
+  typeOf?: (mt: number[]) => string;
+  /** how often each type is chosen (for the coincidence maths) */
+  typeProb?: Record<string, number>;
 }
 
 export const END_CITY: PlacementConfig = {
@@ -62,6 +68,28 @@ export const END_CITY: PlacementConfig = {
   salt: 10387313,
   triangular: true,
   blockOffset: 8,
+  tolerance: 20,
+};
+
+/**
+ * Bastions and Nether Fortresses share one grid. MCBEStructureFinder lists
+ * {spacing 30, range 26, salt 430084232} with a third draw choosing the type
+ * (mt % 6 >= 2 => bastion); its Nether code is commented out. Tested against
+ * real finds on this seed, the Java salt 30084232 with uniform offsets is the
+ * variant that matches (430084232 looks like a typo), so that is used here.
+ */
+export const NETHER_COMPLEX: PlacementConfig = {
+  id: 'nether',
+  label: 'Nether structure',
+  spacing: 30,
+  range: 26,
+  salt: 30084232,
+  triangular: false,
+  blockOffset: 8,
+  // fortresses sprawl: a blaze spawner room can be far from the start piece
+  tolerance: 48,
+  typeOf: (mt) => (mt[2] % 6 >= 2 ? 'bastion' : 'fortress'),
+  typeProb: { bastion: 4 / 6, fortress: 2 / 6 },
 };
 
 /** Java's 64-bit region seed formula, truncated to 32 bits (identical constants in Bedrock). */
@@ -90,17 +118,25 @@ export function seedVariants(seed: string): SeedVariant[] {
 
 const floorDiv = (a: number, b: number) => Math.floor(a / b);
 
-/** Start chunk of the structure attempt in region (rx, rz). */
-export function candidateChunk(cfg: PlacementConfig, seed32: number, rx: number, rz: number): { cx: number; cz: number } {
-  const r = mtFirst(regionSeed(seed32, cfg.salt, rx, rz), cfg.triangular ? 4 : 2).map((x) => x % cfg.range);
+/** Start chunk (and type, for shared grids) of the structure attempt in region (rx, rz). */
+export function candidateChunk(cfg: PlacementConfig, seed32: number, rx: number, rz: number): { cx: number; cz: number; type: string | null } {
+  const offsetDraws = cfg.triangular ? 4 : 2;
+  const mt = mtFirst(regionSeed(seed32, cfg.salt, rx, rz), offsetDraws + (cfg.typeOf ? 1 : 0));
+  const r = mt.map((x) => x % cfg.range);
   const ox = cfg.triangular ? Math.floor((r[0] + r[1]) / 2) : r[0];
   const oz = cfg.triangular ? Math.floor((r[2] + r[3]) / 2) : r[1];
-  return { cx: rx * cfg.spacing + ox, cz: rz * cfg.spacing + oz };
+  const type = cfg.typeOf ? cfg.typeOf(cfg.triangular ? [mt[0], mt[1], mt[4]] : mt) : null;
+  return { cx: rx * cfg.spacing + ox, cz: rz * cfg.spacing + oz, type };
+}
+
+export function candidate(cfg: PlacementConfig, seed32: number, rx: number, rz: number): { x: number; z: number; type: string | null } {
+  const { cx, cz, type } = candidateChunk(cfg, seed32, rx, rz);
+  return { x: cx * 16 + cfg.blockOffset, z: cz * 16 + cfg.blockOffset, type };
 }
 
 export function candidateBlock(cfg: PlacementConfig, seed32: number, rx: number, rz: number): { x: number; z: number } {
-  const { cx, cz } = candidateChunk(cfg, seed32, rx, rz);
-  return { x: cx * 16 + cfg.blockOffset, z: cz * 16 + cfg.blockOffset };
+  const { x, z } = candidate(cfg, seed32, rx, rz);
+  return { x, z };
 }
 
 export function regionOfBlock(cfg: PlacementConfig, x: number, z: number): { rx: number; rz: number } {
@@ -135,16 +171,26 @@ export function coreBox(cfg: PlacementConfig): { inset: number; probability: num
 
 // ---- verification against the user's finds ------------------------------------
 
-/** Blocks between a found marker (placed at the base of the entrance tower) and a prediction that still count as a match. */
-export const MATCH_TOLERANCE = 20;
+/** End City match tolerance (marker at the base of the entrance tower). */
+export const MATCH_TOLERANCE = END_CITY.tolerance;
+
+export interface Find {
+  id: string;
+  x: number;
+  z: number;
+  /** structure type for shared grids (bastion / fortress) */
+  type?: string;
+}
 
 export interface FindCheck {
   id: string;
   x: number;
   z: number;
+  type?: string;
   /** nearest prediction under this variant, and distance to it */
-  predicted: { x: number; z: number };
+  predicted: { x: number; z: number; type: string | null };
   dist: number;
+  /** close enough, and the right type where types apply */
   match: boolean;
   /** inside (or within tolerance of) a region's possible spawn box */
   inGrid: boolean;
@@ -156,15 +202,15 @@ export interface VariantResult {
   matches: number;
 }
 
-export function checkFind(cfg: PlacementConfig, seed32: number, f: { id: string; x: number; z: number }): FindCheck {
+export function checkFind(cfg: PlacementConfig, seed32: number, f: Find): FindCheck {
   const { rx, rz } = regionOfBlock(cfg, f.x, f.z);
-  let best = { x: 0, z: 0 };
+  let best: FindCheck['predicted'] = { x: 0, z: 0, type: null };
   let dist = Infinity;
   let inGrid = false;
-  const tol = MATCH_TOLERANCE;
+  const tol = cfg.tolerance;
   for (let dz = -1; dz <= 1; dz++)
     for (let dx = -1; dx <= 1; dx++) {
-      const p = candidateBlock(cfg, seed32, rx + dx, rz + dz);
+      const p = candidate(cfg, seed32, rx + dx, rz + dz);
       const d = Math.hypot(p.x - f.x, p.z - f.z);
       if (d < dist) {
         dist = d;
@@ -173,10 +219,11 @@ export function checkFind(cfg: PlacementConfig, seed32: number, f: { id: string;
       const b = spawnBox(cfg, rx + dx, rz + dz);
       if (f.x >= b.x0 - tol && f.x < b.x1 + tol && f.z >= b.z0 - tol && f.z < b.z1 + tol) inGrid = true;
     }
-  return { id: f.id, x: f.x, z: f.z, predicted: best, dist, match: dist <= tol, inGrid };
+  const typeOk = !cfg.typeOf || !f.type || best.type === f.type;
+  return { id: f.id, x: f.x, z: f.z, type: f.type, predicted: best, dist, match: dist <= tol && typeOk, inGrid };
 }
 
-export function verify(cfg: PlacementConfig, seed: string, finds: { id: string; x: number; z: number }[]): VariantResult[] {
+export function verify(cfg: PlacementConfig, seed: string, finds: Find[]): VariantResult[] {
   return seedVariants(seed)
     .map((variant) => {
       const checks = finds.map((f) => checkFind(cfg, variant.seed32, f));
@@ -200,7 +247,7 @@ function offsetDist(cfg: PlacementConfig): number[] {
  * chance that two independent placements in the same region land within
  * MATCH_TOLERANCE of each other.
  */
-export function chanceMatch(cfg: PlacementConfig, tol = MATCH_TOLERANCE): number {
+export function chanceMatch(cfg: PlacementConfig, tol = cfg.tolerance): number {
   const d = offsetDist(cfg);
   const diff = new Map<number, number>();
   for (let a = 0; a < d.length; a++) for (let b = 0; b < d.length; b++) diff.set(a - b, (diff.get(a - b) ?? 0) + d[a] * d[b]);
@@ -226,7 +273,7 @@ export interface Assessment {
  * find. Confidence comes from how unlikely that is by chance:
  * possible > 1 in 20, likely > 1 in 1000, confirmed below that.
  */
-export function assess(cfg: PlacementConfig, seed: string, finds: { id: string; x: number; z: number }[]): Assessment {
+export function assess(cfg: PlacementConfig, seed: string, finds: Find[]): Assessment {
   const results = verify(cfg, seed, finds);
   const gridChecks = results[0]?.checks ?? [];
   const outsideGrid = gridChecks.filter((c) => !c.inGrid);
@@ -235,7 +282,10 @@ export function assess(cfg: PlacementConfig, seed: string, finds: { id: string; 
   if (!perfect.length) {
     return { finds: finds.length, best: results[0], confidence: 'mismatch', coincidence: 1, gridOk: !outsideGrid.length, outsideGrid };
   }
-  const coincidence = Math.min(1, results.length * chanceMatch(cfg) ** finds.length);
+  // per find: landing within tolerance by luck, times guessing its type by luck
+  const pDist = chanceMatch(cfg);
+  const perFind = finds.map((f) => pDist * (cfg.typeProb && f.type ? cfg.typeProb[f.type] ?? 1 : 1));
+  const coincidence = Math.min(1, results.length * perFind.reduce((a, b) => a * b, 1));
   const confidence: Confidence = coincidence > 1 / 20 ? 'possible' : coincidence > 1 / 1000 ? 'likely' : 'confirmed';
   return { finds: finds.length, best: perfect[0], confidence, coincidence, gridOk: !outsideGrid.length, outsideGrid };
 }

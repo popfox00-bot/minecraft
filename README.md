@@ -133,9 +133,11 @@ On startup the app also logs the spot checks. Current results for this seed:
 | Dungeon B 1204, −2807 | sparse_jungle | lush_caves (Y −1) |
 | Nether 0, 0 | crimson_forest | — |
 
-## Suggested End Cities (experimental, Bedrock)
+## Suggested structures (experimental, Bedrock)
 
-The castle button opens the End City panel and switches to the End tab. It is a port of the public Bedrock placement research, trusted only as far as it matches the cities you have found.
+### End Cities
+
+The castle button opens the suggestions panel. Its End Cities tab switches the map to the End. It is a port of the public Bedrock placement research, trusted only as far as it matches the cities you have found.
 
 - **The grid:**
   - The End is split into 20×20-chunk regions (320 blocks), and each region holds at most one city, starting somewhere in a 9×9-chunk box in its north-west corner.
@@ -159,6 +161,31 @@ The castle button opens the End City panel and switches to the End tab. It is a 
   - "Show unverified predictions" draws the low-32 pins before any match, dashed and labelled.
 - **Void hint:** each suggestion says "outer islands" or "likely void" from Java's End zones. Bedrock's islands may differ.
 - **Tip:** "+ Marker" saves a suggestion as a planned End City. When you reach it, move the marker to the entrance tower base and set it to Found; it then counts as evidence.
+
+### Nether: bastions and fortresses
+
+The same panel has a **Bastions & Fortresses** tab, which opens the Nether.
+
+- **The grid:**
+  - Bastions and fortresses share one grid of 30×30-chunk regions (480 blocks). Each region holds one structure, starting somewhere in a 26×26-chunk box, with uniform (not centre-weighted) offsets.
+  - A third random draw picks the type: `mt % 6 >= 2` → bastion (about 2 in 3), otherwise fortress.
+- **Formula choice:**
+  - MCBEStructureFinder lists salt `430084232`, but its Nether code is commented out.
+  - I tested 12 variants (2 salts × uniform/averaged offsets × 3 seed reductions) against a real fortress find on this seed. Only the **Java salt `30084232`, uniform offsets, low 32 bits** matched, at 12 blocks and with the right type.
+  - The `430084232` in the source looks like a typo for the Java salt.
+- **Evidence on this seed so far:**
+  - fortress (blaze spawner) at 155, −340, predicted 152, −328;
+  - bastion at −184, −104, predicted exactly, found by following the prediction.
+  - These are kept as regression tests in `tests/structures.test.ts`. The app rates it "Likely" (about 1 in 990). The first find also chose the variant, so it isn't fully independent.
+- **Matching:**
+  - Markers in the **Bastion** or **Nether Fortress** categories (status Found, Built or Looted, in the Nether) count as finds.
+  - The tolerance is 48 blocks because fortresses sprawl, and the type has to match too. A bastion marker where a fortress is predicted counts as a miss.
+- **Suggestions:** pins are coloured by type, and each suggestion shows the Overworld portal position (×8).
+- **Caveats:**
+  - In Java, bastions never generate in basalt deltas, so a predicted bastion there may be missing.
+  - The app's Nether biomes aren't verified against Bedrock.
+
+The End Cities on this seed also match the low-32 formula: 426, 1327 and 1642, 1983 were each 7 blocks from their predictions, at the same +2 X, +7 Z offset.
 
 ## How biome tiles work
 
@@ -205,7 +232,8 @@ npm run e2e -- http://localhost:4173/
 ## TODO — Phase 2 (not started)
 
 - [x] Experimental Bedrock structure layer for **End Cities** (see above).
-- [ ] Same approach for other structures (villages, outposts, monuments, mansions), which also need Bedrock biome checks.
+- [x] Same approach for Nether bastions and fortresses (see above).
+- [ ] Overworld structures (villages, outposts, monuments, mansions), which also need Bedrock biome checks.
 - [ ] Optional overlay of real explored terrain from tiles exported by a Bedrock renderer (e.g. bedrock-render or PapyrusCS).
 
 ## Layout

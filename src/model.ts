@@ -108,6 +108,8 @@ const DEFAULT_CATS: [string, string, IconName][] = [
   ['Farm', '#5c946e', 'wheat'],
   ['Point of Interest', '#e0a100', 'star'],
   ['End City', '#9b6fb0', 'ship'],
+  ['Bastion', '#a0701c', 'chest'],
+  ['Nether Fortress', '#8e2f2f', 'sword'],
 ];
 
 export function slug(s: string): string {

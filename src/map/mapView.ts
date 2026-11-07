@@ -17,7 +17,7 @@ import type { BiomeClient } from '../gen/client';
 import type { Store } from '../store';
 import type { Marker, Measure, MeasurePoint } from '../model';
 import { iconSvg } from '../icons';
-import { END_CITY, candidateBlock, coreBox, regionsIn, spawnBox } from '../structures/bedrock';
+import { candidate, coreBox, regionsIn, spawnBox } from '../structures/bedrock';
 import { regionKey, regionTooClose, type EndCityState } from '../structures/endCities';
 
 /** Structure boxes/pins are drawn from this zoom up (keeps the count of shapes small). */
@@ -59,7 +59,7 @@ export class MapView {
   private searchLayer = L.layerGroup();
   private structLayer = L.layerGroup();
   private structRenderer = L.canvas({ padding: 0.2 });
-  private structInput: { state: EndCityState; boxes: boolean; pins: boolean; onTap: (p: { x: number; z: number }) => void } | null = null;
+  private structInput: { state: EndCityState; boxes: boolean; pins: boolean; onTap: (p: { x: number; z: number; type: string | null }) => void } | null = null;
   private markerEls = new Map<string, L.Marker>();
   measuring = false;
   private pendingA: MeasurePoint | null = null;
@@ -264,35 +264,41 @@ export class MapView {
   private drawStructures(): void {
     this.structLayer.clearLayers();
     const inp = this.structInput;
-    if (!inp || this.dim !== 'end' || (!inp.boxes && !inp.pins)) return;
+    if (!inp || this.dim !== inp.state.kind.dim || (!inp.boxes && !inp.pins)) return;
     if (this.map.getZoom() < STRUCT_MIN_ZOOM) return;
+    const { kind } = inp.state;
+    const cfg = kind.cfg;
     const b = this.map.getBounds().pad(0.1);
     const x0 = b.getWest(), x1 = b.getEast(), z0 = -b.getNorth(), z1 = -b.getSouth();
-    const core = coreBox(END_CITY);
+    const core = coreBox(cfg);
     const r = this.structRenderer;
     const css = getComputedStyle(document.documentElement);
-    const color = css.getPropertyValue('--struct').trim() || '#9b6fb0';
-    const found = css.getPropertyValue('--struct-found').trim() || '#5c946e';
-    for (const { rx, rz } of regionsIn(END_CITY, x0, z0, x1, z1)) {
-      if (regionTooClose(rx, rz)) continue;
+    const cssVar = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+    const color = cssVar('--struct', '#6f3f91');
+    const found = cssVar('--struct-found', '#3f7a50');
+    const typeColor: Record<string, string> = { bastion: cssVar('--bastion', '#a0701c'), fortress: cssVar('--fortress', '#8e2f2f') };
+    for (const { rx, rz } of regionsIn(cfg, x0, z0, x1, z1)) {
+      if (regionTooClose(kind, rx, rz)) continue;
       const done = inp.state.marked.has(regionKey(rx, rz));
       const rect = (inset: number) => {
-        const s = spawnBox(END_CITY, rx, rz, inset);
+        const s = spawnBox(cfg, rx, rz, inset);
         return L.latLngBounds([-s.z0, s.x0], [-s.z1, s.x1]);
       };
       if (inp.boxes) {
         L.rectangle(rect(0), { renderer: r, weight: 1, color: done ? found : color, opacity: 0.5, fill: false, dashArray: '4 4', interactive: false }).addTo(this.structLayer);
-        if (!done) L.rectangle(rect(core.inset), { renderer: r, weight: 0, fillColor: color, fillOpacity: 0.12, interactive: false }).addTo(this.structLayer);
+        // the centre-weighted core only exists for averaged (triangular) offsets
+        if (!done && core.inset) L.rectangle(rect(core.inset), { renderer: r, weight: 0, fillColor: color, fillOpacity: 0.12, interactive: false }).addTo(this.structLayer);
       }
       if (inp.pins && inp.state.pinVariant && !done) {
-        const p = candidateBlock(END_CITY, inp.state.pinVariant.seed32, rx, rz);
+        const p = candidate(cfg, inp.state.pinVariant.seed32, rx, rz);
+        const c = (p.type && typeColor[p.type]) || color;
         L.circleMarker(blockCenterLatLng(p.x, p.z), {
           renderer: r,
-          radius: 7,
+          radius: p.type === 'bastion' ? 8 : 7,
           weight: 2,
-          color,
-          fillColor: color,
-          fillOpacity: inp.state.unverified ? 0 : 0.35,
+          color: c,
+          fillColor: c,
+          fillOpacity: inp.state.unverified ? 0 : 0.4,
           dashArray: inp.state.unverified || inp.state.assessment.confidence === 'possible' ? '3 3' : undefined,
         })
           .on('click', (e) => {

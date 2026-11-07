@@ -4,7 +4,7 @@ import './styles.css';
 import { BiomeClient } from './gen/client';
 import { Store } from './store';
 import { Syncer } from './sync/syncer';
-import { endCityState, END_CITY_CATEGORY } from './structures/endCities';
+import { KINDS, TYPE_LABEL, kindForDim, structureState, type StructureKind } from './structures/endCities';
 import { structuresPanel, type StructuresHost } from './ui/structures';
 import * as bedrock from './structures/bedrock';
 import { MapView, formatMeasure } from './map/mapView';
@@ -72,7 +72,7 @@ async function main() {
     gotoForm,
     h('div', { class: 'top-actions' },
       iconBtn('Find biome near me', ICON.find, () => openBiomeSearch()),
-      iconBtn('Suggested End Cities', ICON.castle, () => openStructures()),
+      iconBtn('Suggested structures', ICON.castle, () => openStructures()),
       iconBtn('Add marker at map centre', ICON.plus, () => addAt(view.centerBlock())),
       measureBtn,
       iconBtn('Converter & measure', ICON.swap, () => openTools()),
@@ -277,48 +277,78 @@ async function main() {
   };
   const openBiomeSearch = (preset?: { biome: number; autorun: boolean }) =>
     openSheet('Find biome', biomeSearchPanel(host, biomeHost, preset));
-  // ---- End City suggestions ----
-  let structState = endCityState(store.settings.seed, store.markers, store.settings.structUnverified);
+  // ---- structure suggestions (End Cities, bastions + fortresses) ----
+  const STRUCT_CATS = new Set(Object.values(KINDS).flatMap((k) => Object.values(k.categories)));
+  // Overworld has no predicted structures yet: the panel then shows the Nether
+  let structKind: StructureKind = store.settings.dim === 'end' ? KINDS.end : KINDS.nether;
+  let structState = structureState(structKind, store.settings.seed, store.markers, store.settings.structUnverified);
   let structKey = '';
-  function refreshStructures() {
-    // only seed, the layer toggles and End City markers affect predictions
+  const structPanelOpen = () => current.startsWith('Suggested ');
+  function refreshStructures(force = false) {
     const st = store.settings;
-    const key = [st.seed, st.dim, st.structBoxes, st.structPins, st.structUnverified,
-      ...store.markers.filter((m) => m.categoryId === END_CITY_CATEGORY).map((m) => `${m.id}:${m.x}:${m.z}:${m.dim}:${m.status}`)].join('|');
-    if (key === structKey) return;
+    if (st.dim === 'end' || st.dim === 'nether') structKind = kindForDim(st.dim);
+    // only seed, the layer toggles and structure markers affect predictions
+    const key = [structKind.id, st.seed, st.dim, st.structBoxes, st.structPins, st.structUnverified,
+      ...store.markers.filter((m) => STRUCT_CATS.has(m.categoryId)).map((m) => `${m.id}:${m.categoryId}:${m.x}:${m.z}:${m.dim}:${m.status}`)].join('|');
+    if (key === structKey && !force) return;
     structKey = key;
-    structState = endCityState(store.settings.seed, store.markers, store.settings.structUnverified);
+    structState = structureState(structKind, st.seed, store.markers, st.structUnverified);
     view.setStructures({
       state: structState,
-      boxes: store.settings.structBoxes,
-      pins: store.settings.structPins,
-      onTap: (p) => { pinned = p; view.showPick(p); updateReadout(); },
+      boxes: st.structBoxes,
+      pins: st.structPins,
+      onTap: (p) => {
+        pinned = { x: p.x, z: p.z };
+        view.showPick(pinned);
+        updateReadout();
+        toast(`Predicted ${p.type ? TYPE_LABEL[p.type].toLowerCase() : 'End City'} at ${p.x}, ${p.z}`);
+      },
     });
-    if (current === 'Suggested End Cities') openStructures(false);
+    if (structPanelOpen()) void openStructures(structKind, false, true);
   }
   const structHost: StructuresHost = {
     store,
     state: () => structState,
     origin: () => {
-      if (store.settings.dim !== 'end') return { x: 0, z: 0, label: 'the main island' };
+      if (store.settings.dim !== structKind.dim) return { x: 0, z: 0, label: structKind.id === 'end' ? 'the main island' : '0, 0' };
       const c = view.centerBlock();
       return { x: c.x, z: c.z, label: `map centre (${c.x}, ${c.z})` };
     },
     flyTo: (x, z) => biomeHost.flyTo(x, z),
     addPlanned: (sg) => {
-      const m = blankMarker(host, sg.x, sg.z, 'end');
-      openMarker({ ...m, name: 'End City (suggested)', categoryId: END_CITY_CATEGORY, status: 'planned' }, true);
+      const type = sg.type ?? (structKind.id === 'nether' ? 'bastion' : '');
+      const m = blankMarker(host, sg.x, sg.z, structKind.dim);
+      const categoryId = structKind.categories[type] ?? Object.values(structKind.categories)[0];
+      openMarker({ ...m, name: `${TYPE_LABEL[type]} (suggested)`, categoryId, status: 'planned' }, true);
     },
     editMarker: (m) => { if (m.dim !== store.settings.dim) void switchDim(m.dim, true); view.goTo(m.x, m.z); openMarker(m, false); },
+    switchKind: (k) => void openStructures(k),
     zoneAt: async (x, z) => client.names[await client.biomeAt(store.settings.seed, mcResolved(), 'end', x, z)] ?? '',
   };
-  async function openStructures(switchToEnd = true) {
-    if (switchToEnd && store.settings.dim !== 'end') {
-      await switchDim('end');
-      // far enough out to see the empty ring and the first grid boxes
-      view.map.setZoom(-3, { animate: false });
+  // keep "Nearest to map centre" current while the panel is open
+  let structMoveTimer = 0;
+  view.map.on('moveend', () => {
+    if (!structPanelOpen() || store.settings.dim !== structKind.dim) return;
+    clearTimeout(structMoveTimer);
+    structMoveTimer = window.setTimeout(() => {
+      const top = sheetBody.scrollTop;
+      openSheet(structKind.title, structuresPanel(structHost));
+      sheetBody.scrollTop = top;
+    }, 300);
+  });
+  async function openStructures(kind?: StructureKind, switchDims = true, fromRefresh = false) {
+    const target = kind ?? (store.settings.dim === 'end' ? KINDS.end : store.settings.dim === 'nether' ? KINDS.nether : structKind.id === 'end' ? KINDS.nether : structKind);
+    structKind = target;
+    if (switchDims && store.settings.dim !== target.dim) {
+      await switchDim(target.dim);
+      // far enough out to see several grid regions
+      view.map.setZoom(target.id === 'end' ? -3 : -2, { animate: false });
     }
-    openSheet('Suggested End Cities', structuresPanel(structHost));
+    if (!fromRefresh) {
+      refreshStructures(true);
+      if (structPanelOpen() && current === target.title) return; // refresh already re-rendered it
+    }
+    openSheet(target.title, structuresPanel(structHost));
   }
 
   function renderSuggestions() {

@@ -267,8 +267,8 @@ button.danger { color: var(--danger); }
 .legend .legend-foot.sync-ok, .legend .legend-foot.sync-syncing, .legend .legend-foot.sync-error { display: block; }
 
 /* ---- structure suggestions ---- */
-:root { --struct: #6f3f91; --struct-found: #3f7a50; }
-:root[data-theme='dark'] { --struct: #c39be0; --struct-found: #7cc191; }
+:root { --struct: #6f3f91; --struct-found: #3f7a50; --bastion: #a0701c; --fortress: #8e2f2f; }
+:root[data-theme='dark'] { --struct: #c39be0; --struct-found: #7cc191; --bastion: #e0b25a; --fortress: #e08a8a; }
 .struct-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .struct-card .big { font-size: 16px; font-weight: 600; }
 .struct-card.warn { border-color: var(--danger); }
@@ -284,3 +284,8 @@ button.danger { color: var(--danger); }
 }
 .find-mark { color: var(--struct-found); font-weight: 700; }
 .find-row.miss .find-mark { color: var(--danger); }
+
+.struct-tabs { margin-bottom: 10px; box-shadow: none; width: 100%; }
+.struct-tabs .tab { flex: 1; }
+.legend-types { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.legend-types .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
