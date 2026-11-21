@@ -12,6 +12,7 @@ import {
   type Dimension,
 } from '../coords';
 import { BiomeLayer } from './biomeLayer';
+import { biomesMatchBedrock } from '../biomes';
 import { GridLayer } from './gridLayer';
 import type { BiomeClient } from '../gen/client';
 import type { Store } from '../store';
@@ -60,6 +61,10 @@ export class MapView {
   private structLayer = L.layerGroup();
   private structRenderer = L.canvas({ padding: 0.2 });
   private structInput: { state: EndCityState; boxes: boolean; pins: boolean; onTap: (p: { x: number; z: number; type: string | null }) => void } | null = null;
+  /** Overworld biome at structure candidates ("seed|mc|x,z" → id), filled as pins are drawn. */
+  private pinBiomes = new Map<string, number>();
+  private pinPending = new Set<string>();
+  private pinRedraw = 0;
   private markerEls = new Map<string, L.Marker>();
   measuring = false;
   private pendingA: MeasurePoint | null = null;
@@ -68,7 +73,7 @@ export class MapView {
   constructor(
     el: HTMLElement,
     private store: Store,
-    client: BiomeClient,
+    private client: BiomeClient,
     private mcResolved: () => number,
     private ev: MapEvents,
   ) {
@@ -88,10 +93,11 @@ export class MapView {
 
     const s = store.settings;
     this.biome = new BiomeLayer(client, { seed: s.seed, mc: mcResolved(), dim: s.dim });
-    this.biome.addTo(this.map);
+    if (biomesMatchBedrock(s.dim)) this.biome.addTo(this.map);
     this.grid = new GridLayer();
     this.grid.chunk = s.chunkGrid;
     this.grid.region = s.regionGrid;
+    this.grid.slime = s.slimeChunks && s.dim === 'overworld';
     this.grid.addTo(this.map);
     this.ghostLayer.addTo(this.map);
     this.measureLayer.addTo(this.map);
@@ -122,11 +128,16 @@ export class MapView {
 
   refreshSource(): void {
     const s = this.store.settings;
-    this.biome.setSource({ seed: s.seed, mc: this.mcResolved(), dim: s.dim });
+    // (The Nether and End maps don't match Bedrock: a plain background there.)
+    if (biomesMatchBedrock(s.dim)) {
+      if (!this.map.hasLayer(this.biome)) this.biome.addTo(this.map);
+      this.biome.setSource({ seed: s.seed, mc: this.mcResolved(), dim: s.dim });
+    } else if (this.map.hasLayer(this.biome)) this.biome.remove();
   }
 
   refreshGrid(): void {
-    this.grid.setVisible(this.store.settings.chunkGrid, this.store.settings.regionGrid);
+    const s = this.store.settings;
+    this.grid.setVisible(s.chunkGrid, s.regionGrid, s.slimeChunks && s.dim === 'overworld');
   }
 
   // ---- view -----------------------------------------------------------------
@@ -266,8 +277,7 @@ export class MapView {
     const inp = this.structInput;
     if (!inp || this.dim !== inp.state.kind.dim || (!inp.boxes && !inp.pins)) return;
     if (this.map.getZoom() < STRUCT_MIN_ZOOM) return;
-    const { kind } = inp.state;
-    const cfg = kind.cfg;
+    const { kind, cfg } = inp.state;
     const b = this.map.getBounds().pad(0.1);
     const x0 = b.getWest(), x1 = b.getEast(), z0 = -b.getNorth(), z1 = -b.getSouth();
     const core = coreBox(cfg);
@@ -278,7 +288,7 @@ export class MapView {
     const found = cssVar('--struct-found', '#3f7a50');
     const typeColor: Record<string, string> = { bastion: cssVar('--bastion', '#a0701c'), fortress: cssVar('--fortress', '#8e2f2f') };
     for (const { rx, rz } of regionsIn(cfg, x0, z0, x1, z1)) {
-      if (regionTooClose(kind, rx, rz)) continue;
+      if (regionTooClose(kind, rx, rz, cfg)) continue;
       const done = inp.state.marked.has(regionKey(rx, rz));
       const rect = (inset: number) => {
         const s = spawnBox(cfg, rx, rz, inset);
@@ -291,6 +301,12 @@ export class MapView {
       }
       if (inp.pins && inp.state.pinVariant && !done) {
         const p = candidate(cfg, inp.state.pinVariant.seed32, rx, rz);
+        // (Overworld: only where the biome allows it, which also picks a temple's kind.)
+        if (kind.biomes) {
+          const b = this.biomeForPin(p.x, p.z);
+          if (b == null || !(b in kind.biomes)) continue;
+          p.type = kind.biomes[b] || null;
+        }
         const c = (p.type && typeColor[p.type]) || color;
         L.circleMarker(blockCenterLatLng(p.x, p.z), {
           renderer: r,
@@ -308,6 +324,24 @@ export class MapView {
           .addTo(this.structLayer);
       }
     }
+  }
+
+  /** The Overworld biome at a structure candidate, from the cache, or null while it's fetched (then redrawn). */
+  private biomeForPin(x: number, z: number): number | null {
+    const s = this.store.settings;
+    const key = `${s.seed}|${this.mcResolved()}|${x},${z}`;
+    const got = this.pinBiomes.get(key);
+    if (got != null) return got;
+    if (!this.pinPending.has(key)) {
+      this.pinPending.add(key);
+      this.client.biomeAt(s.seed, this.mcResolved(), 'overworld', x, z).then((id) => {
+        this.pinBiomes.set(key, id);
+        this.pinPending.delete(key);
+        clearTimeout(this.pinRedraw);
+        this.pinRedraw = window.setTimeout(() => this.drawStructures(), 60);
+      }, () => this.pinPending.delete(key));
+    }
+    return null;
   }
 
   // ---- biome search results ------------------------------------------------------

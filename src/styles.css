@@ -10,6 +10,7 @@
   --danger: #b23a3a;
   --map-bg: #e6e6e1;
   --grid-chunk: rgba(0, 0, 0, 0.09);
+  --slime: rgba(60, 160, 50, 0.38);
   --grid-region: rgba(0, 0, 0, 0.2);
   --measure: #1d1f22;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
@@ -28,6 +29,7 @@
   --danger: #e07070;
   --map-bg: #1b1d20;
   --grid-chunk: rgba(255, 255, 255, 0.08);
+  --slime: rgba(110, 210, 90, 0.4);
   --grid-region: rgba(255, 255, 255, 0.26);
   --measure: #f2f2f2;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
@@ -285,7 +287,17 @@ button.danger { color: var(--danger); }
 .find-mark { color: var(--struct-found); font-weight: 700; }
 .find-row.miss .find-mark { color: var(--danger); }
 
-.struct-tabs { margin-bottom: 10px; box-shadow: none; width: 100%; }
-.struct-tabs .tab { flex: 1; }
+.struct-tab-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.struct-tabs { box-shadow: none; width: 100%; flex-wrap: wrap; }
+.struct-tabs .tab { flex: 1; min-width: max-content; }
 .legend-types { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .legend-types .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+/* ---- Nether / End: no terrain shown ---- */
+.dim-note {
+  position: absolute; left: 50%; top: 116px; transform: translateX(-50%); z-index: 850;
+  background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow);
+  padding: 6px 10px; font-size: 12px; max-width: min(460px, calc(100% - 24px)); text-align: center; pointer-events: none;
+}
+.dim-note[hidden] { display: none; }
+@media (min-width: 760px) { .dim-note { top: 64px; } }

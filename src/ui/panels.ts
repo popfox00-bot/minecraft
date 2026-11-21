@@ -17,6 +17,8 @@ import { newId, slug, STATUSES, VERSIONS, type Category, type Marker, type Statu
 import { normalizeSeed } from '../seed';
 import type { Store } from '../store';
 import { formatMeasure } from '../map/mapView';
+import { planPortal, SEARCH_RADIUS } from '../portals';
+import { isSlimeChunk, nearestSlimeChunks } from '../structures/slime';
 import { BIOMES_BY_DIM, BIOME_COLORS, CAVE_BIOME_Y, prettyBiome } from '../biomes';
 import type { SearchHit, SearchResult } from '../gen/search';
 import type { Syncer, SyncStatus } from '../sync/syncer';
@@ -30,6 +32,8 @@ export interface PanelHost {
   clearTileCache(): Promise<void>;
   toast(msg: string): void;
   startMeasure(): void;
+  /** go to a spot (switching dimension), with it pinned */
+  goTo(dim: Dimension, x: number, z: number): void;
 }
 
 const dimLabel = (d: Dimension) => DIM_LABEL[d];
@@ -359,6 +363,7 @@ export function settingsPanel(host: PanelHost, openCategories: () => void, synce
   theme.value = s.theme;
   const chunk = h('input', { type: 'checkbox', checked: s.chunkGrid, onchange: () => store.updateSettings({ chunkGrid: chunk.checked }) });
   const region = h('input', { type: 'checkbox', checked: s.regionGrid, onchange: () => store.updateSettings({ regionGrid: region.checked }) });
+  const slime = h('input', { type: 'checkbox', checked: s.slimeChunks, onchange: () => store.updateSettings({ slimeChunks: slime.checked }) });
 
   const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
   fileIn.addEventListener('change', async () => {
@@ -392,11 +397,12 @@ export function settingsPanel(host: PanelHost, openCategories: () => void, synce
     h('h3', {}, 'World'),
     field('Seed', seed), seedErr,
     field('Generator version', ver),
-    h('p', { class: 'hint' }, 'Biomes: Java-parity generator (cubiomes). Bedrock and Java share biome generation since 1.18. Structures are not predicted — add them as markers.'),
+    h('p', { class: 'hint' }, 'Biomes: Java-parity generator (cubiomes). Bedrock and Java share Overworld biome generation since 1.18; the Nether and End maps differ, so they aren\'t shown. Structures are predicted experimentally (the castle button), trusted only as far as they match your finds.'),
     h('h3', {}, 'Display'),
     field('Theme', theme),
     h('label', { class: 'check' }, chunk, h('span', {}, 'Chunk grid (16 blocks, when zoomed in)')),
     h('label', { class: 'check' }, region, h('span', {}, 'Region grid (512 blocks)')),
+    h('label', { class: 'check' }, slime, h('span', {}, 'Slime chunks (Overworld, green; Bedrock\'s formula)')),
     h('button', { onclick: openCategories }, 'Edit categories…'),
     h('h3', {}, 'Data'),
     h('div', { class: 'actions' },
@@ -432,6 +438,8 @@ export function toolsPanel(host: PanelHost): HTMLElement {
     h('h3', {}, 'Overworld ⇄ Nether (1:8)'),
     h('div', { class: 'row2' }, field('Overworld', ow), field('Nether', ne)),
     h('p', { class: 'hint' }, 'Overworld → Nether uses floor division (−2808 → −351).'),
+    portalPlanner(host),
+    slimeSection(host),
     h('h3', {}, 'Measure'),
     mInfo
       ? h('div', { class: 'measure-box' },
@@ -443,6 +451,88 @@ export function toolsPanel(host: PanelHost): HTMLElement {
       h('button', { class: 'primary', onclick: () => host.startMeasure() }, 'New measurement'),
       m && h('button', { onclick: async () => { await store.updateSettings({ measure: null }); host.close(); } }, 'Clear')),
   );
+}
+
+// ---- portal planner ---------------------------------------------------------------
+
+const PORTAL_CATEGORY = 'portal';
+const planState = { from: 'overworld' as 'overworld' | 'nether', x: '', y: '', z: '' };
+
+/** Pick a spot (Overworld or Nether) → exactly where to build the matching portal, and what could link wrongly. */
+function portalPlanner(host: PanelHost): HTMLElement {
+  const { store } = host;
+  const dim = store.settings.dim;
+  if (!planState.x && dim !== 'end') { const c = host.center(); Object.assign(planState, { from: dim, x: String(c.x), z: String(c.z) }); }
+  const dir = h('select', { 'aria-label': 'Portal direction' },
+    h('option', { value: 'overworld' }, 'Overworld portal → build in the Nether'),
+    h('option', { value: 'nether' }, 'Nether portal → build in the Overworld'));
+  dir.value = planState.from;
+  const num = (label: string, key: 'x' | 'y' | 'z', ph: string) => {
+    const i = h('input', { type: 'text', inputMode: 'numeric', placeholder: ph, value: planState[key], 'aria-label': `Portal ${label}` });
+    i.addEventListener('input', () => { planState[key] = i.value; draw(); });
+    return field(label, i);
+  };
+  const out = h('div', { class: 'plan-out', 'aria-live': 'polite' });
+  const portals = () => store.markers.filter((mk) => mk.categoryId === PORTAL_CATEGORY && mk.dim !== 'end');
+  const toInt = (s: string) => (s.trim() === '' || !Number.isFinite(Number(s)) ? null : Math.floor(Number(s)));
+  function draw() {
+    out.innerHTML = '';
+    const x = toInt(planState.x); const z = toInt(planState.z); const y = toInt(planState.y);
+    if (x == null || z == null) { out.append(h('p', { class: 'hint' }, 'Type the portal\'s X and Z (Y too, for its height).')); return; }
+    const p = planPortal(planState.from, x, y, z, portals());
+    const to = DIM_LABEL[p.to];
+    const tgt = `${p.target.x}${p.target.y != null ? `, ${p.target.y}` : ''}, ${p.target.z}`;
+    out.append(
+      h('div', { class: 'measure-box' },
+        h('div', { class: 'hint' }, `Build the ${to} portal at`),
+        h('div', { class: 'measure-main' }, tgt),
+        h('div', { class: 'hint' }, p.to === 'nether' ? 'X and Z divided by 8, rounded down; same height (kept inside the Nether: Y 1–122).' : 'X and Z times 8; same height.')),
+      h('div', { class: 'actions' },
+        h('button', { class: 'small', onclick: () => host.goTo(p.to, p.target.x, p.target.z) }, `Show in the ${to}`),
+        h('button', { class: 'small', onclick: () => host.open('New marker', markerForm(host, { ...blankMarker(host, p.target.x, p.target.z, p.to), y: p.target.y, name: `${to} portal (planned)`, categoryId: store.category(PORTAL_CATEGORY) ? PORTAL_CATEGORY : blankMarker(host, 0, 0, p.to).categoryId, status: 'planned' }, true)) }, '+ Marker')));
+    const warn = (cls: string, text: string) => out.append(h('p', { class: cls }, text));
+    const here = p.nearTarget.filter((n) => n.dist <= 3);
+    const others = p.nearTarget.filter((n) => n.dist > 3);
+    if (here.length) warn('hint ok', `✓ ${here[0].portal.name} is already marked there.`);
+    for (const n of others) warn('error', `⚠ ${n.portal.name} (${n.portal.x}, ${n.portal.z}) is ${fmtNum(n.dist, 0)} blocks from that spot, within the ${SEARCH_RADIUS[p.to]} blocks the game searches in the ${to}: unless the new portal is built at the spot, going through can take you to it instead.`);
+    for (const n of p.stealsReturn) warn('error', `⚠ Coming back: ${n.portal.name} (${n.portal.x}, ${n.portal.z}) is nearer to where the game looks (${p.back.x}, ${p.back.z}) than your portal is, so the trip back would come out there.`);
+    if (!others.length && !p.stealsReturn.length) warn('hint', `No other marked portal is in range either way (${SEARCH_RADIUS.nether} blocks in the Nether, ${SEARCH_RADIUS.overworld} in the Overworld). Mark your portals with the “Portal” category so they're checked.`);
+  }
+  dir.addEventListener('change', () => { planState.from = dir.value as 'overworld' | 'nether'; draw(); });
+  draw();
+  return h('div', { class: 'planner' },
+    h('h3', {}, 'Portal planner'),
+    field('Direction', dir),
+    h('div', { class: 'row3' }, num('X', 'x', 'X'), num('Y', 'y', 'any'), num('Z', 'z', 'Z')),
+    h('div', { class: 'actions' }, h('button', { class: 'small', onclick: () => {
+      const c = host.center(); const d = store.settings.dim;
+      if (d !== 'end') planState.from = d;
+      Object.assign(planState, { x: String(c.x), z: String(c.z) });
+      host.open('Tools', toolsPanel(host));
+    } }, 'Use map centre')),
+    out);
+}
+
+// ---- slime chunks -------------------------------------------------------------------
+
+function slimeSection(host: PanelHost): HTMLElement {
+  const { store } = host;
+  const s = store.settings;
+  const cb = h('input', { type: 'checkbox', checked: s.slimeChunks, onchange: () => store.updateSettings({ slimeChunks: cb.checked }) });
+  const c = host.center();
+  const ow = s.dim === 'overworld';
+  const list = h('ul', { class: 'hits' });
+  if (ow) for (const sc of nearestSlimeChunks(c.x, c.z, 5)) list.append(h('li', {},
+    h('button', { class: 'mitem', onclick: () => host.goTo('overworld', sc.x, sc.z) },
+      h('span', { class: 'mitem-main' }, h('span', { class: 'mitem-name' }, `Chunk ${sc.cx}, ${sc.cz}`),
+        h('span', { class: 'mitem-sub' }, `blocks ${sc.cx * 16}…${sc.cx * 16 + 15}, ${sc.cz * 16}…${sc.cz * 16 + 15} · ${fmtNum(sc.dist, 0)} blocks`)))));
+  const ch = { x: Math.floor(c.x / 16), z: Math.floor(c.z / 16) };
+  return h('div', {},
+    h('h3', {}, 'Slime chunks'),
+    h('label', { class: 'check' }, cb, h('span', {}, 'Show slime chunks on the Overworld map (green)')),
+    ow ? h('p', { class: 'hint' }, `The map centre is ${isSlimeChunk(ch.x, ch.z) ? '' : 'not '}in a slime chunk (chunk ${ch.x}, ${ch.z}). Nearest:`) : h('p', { class: 'hint' }, 'Slime chunks are in the Overworld: switch to it for the nearest.'),
+    ow ? list : null,
+    h('p', { class: 'hint' }, 'Bedrock\'s formula (the same in every world, whatever the seed). Slimes spawn in them below Y 40, in any light, except in mushroom fields. Check one in game: if slimes spawn in a chunk shown green, it\'s right.'));
 }
 
 // ---- find biome near me ------------------------------------------------------------

@@ -1,3 +1,9 @@
+/**
+ * Only the Overworld's biomes from this (Java) generator match Bedrock: its Nether biomes and End islands
+ * differ (a Bedrock bastion was found where it shows basalt deltas), so those maps are not shown.
+ */
+export const biomesMatchBedrock = (dim: 'overworld' | 'nether' | 'end'): boolean => dim === 'overworld';
+
 // Muted, low-saturation biome palette (flat colors, no textures).
 // Keys are cubiomes biome ids (Java numeric ids, 1.18+ naming).
 

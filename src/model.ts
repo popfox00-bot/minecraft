@@ -64,6 +64,8 @@ export interface Settings {
   structPins: boolean;
   /** show exact predictions even before they match any find */
   structUnverified: boolean;
+  /** shade Bedrock slime chunks on the Overworld map */
+  slimeChunks: boolean;
 }
 
 export const DEFAULT_SEED = '-2829401596156382806';
@@ -82,6 +84,7 @@ export const DEFAULT_SETTINGS: Settings = {
   structBoxes: true,
   structPins: true,
   structUnverified: false,
+  slimeChunks: false,
 };
 
 /** cubiomes MCVersion values for the 1.18+ (noise-based, Bedrock-parity) generators. */
@@ -110,6 +113,8 @@ const DEFAULT_CATS: [string, string, IconName][] = [
   ['End City', '#9b6fb0', 'ship'],
   ['Bastion', '#a0701c', 'chest'],
   ['Nether Fortress', '#8e2f2f', 'sword'],
+  ['Pillager Outpost', '#59614f', 'flag'],
+  ['Temple', '#b8913a', 'pick'],
 ];
 
 export function slug(s: string): string {

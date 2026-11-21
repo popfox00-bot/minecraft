@@ -301,3 +301,26 @@ export function regionsIn(cfg: PlacementConfig, x0: number, z0: number, x1: numb
 
 /** End Cities never generate on or near the main island (there is no land there). */
 export const END_INNER_RADIUS = 1000;
+
+// ---- Overworld structures -------------------------------------------------------
+//
+// Bedrock's Overworld grids, as hypotheses. Each structure gets the region sizes reported for Bedrock by
+// MCBEStructureFinder (and Java's where Bedrock's are unknown), with both offset kinds (uniform, or the
+// average of two draws). The user's finds decide which, if any, holds (see structureState): until one matches
+// every find, only the search boxes show. Biomes are checked too: the Overworld biome map matches Bedrock.
+
+const ow = (id: string, label: string, spacing: number, range: number, salt: number, triangular: boolean, tolerance: number): PlacementConfig =>
+  ({ id: `${id}-${spacing}-${triangular ? 'tri' : 'uni'}`, label: `${label} (${spacing}-chunk regions, ${triangular ? 'centre-weighted' : 'uniform'})`, spacing, range, salt, triangular, blockOffset: 8, tolerance });
+const both = (id: string, label: string, spacing: number, range: number, salt: number, tolerance: number) =>
+  [ow(id, label, spacing, range, salt, true, tolerance), ow(id, label, spacing, range, salt, false, tolerance)];
+
+/** Villages: Bedrock 34-chunk regions, offsets 0–25. Mark the bell (or the middle). */
+export const VILLAGE_CFGS = both('village', 'Village', 34, 26, 10387312, 64);
+/** Pillager outposts: Bedrock's rarer 80-chunk grid, or Java's 32. */
+export const OUTPOST_CFGS = [...both('outpost', 'Pillager outpost', 80, 56, 165745296, 24), ...both('outpost', 'Pillager outpost', 32, 24, 165745296, 24)];
+/** Ocean monuments: 32-chunk regions, offsets 0–26. */
+export const MONUMENT_CFGS = both('monument', 'Ocean monument', 32, 27, 10387313, 32);
+/** Woodland mansions: 80-chunk regions, offsets 0–59. */
+export const MANSION_CFGS = both('mansion', 'Woodland mansion', 80, 60, 10387319, 40);
+/** Temples (desert pyramid, jungle temple, witch hut, igloo): one shared grid, the biome picks which. */
+export const TEMPLE_CFGS = both('temple', 'Temple', 32, 24, 14357617, 16);
