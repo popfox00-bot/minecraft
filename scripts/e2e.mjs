@@ -115,9 +115,9 @@ check('tiles generated off-thread during pan/zoom', perf.tilesGenerated > 50, `$
 check('no main-thread jank (p95 frame < 50ms, no long task > 150ms)', perf.p95FrameMs < 50 && perf.longestTaskMs < 150,
   `p95 ${perf.p95FrameMs}ms, max frame ${perf.maxFrameMs}ms, long tasks ${perf.longTasks} (longest ${perf.longestTaskMs}ms)`);
 
-// 4b. Tiles exist at every zoom level, both dimensions (GridLayer minZoom regression)
+// 4b. Tiles exist at every zoom level in the Overworld (GridLayer minZoom regression)
 const missing = [];
-for (const d of ['overworld', 'nether']) {
+for (const d of ['overworld']) {
   await page.evaluate((d) => worldatlas.store.updateSettings({ dim: d }), d);
   for (const z of [-6, -4, -2, 0, 2, 5]) {
     await page.evaluate((z) => { worldatlas.view.map.setZoom(z, { animate: false }); }, z);
@@ -127,13 +127,20 @@ for (const d of ['overworld', 'nether']) {
   }
 }
 await page.evaluate(() => worldatlas.store.updateSettings({ dim: 'overworld' }));
-check('biome tiles render at zoom -6..5 in both dimensions', missing.length === 0, missing.join(', ') || 'all present');
+check('biome tiles render at zoom -6..5 in the Overworld', missing.length === 0, missing.join(', ') || 'all present');
 
 // 5. Nether tab
 await page.getByRole('tab', { name: 'Nether' }).click();
 await page.waitForTimeout(800);
 const dim = await page.evaluate(() => worldatlas.store.settings.dim);
 check('nether tab switches dimension', dim === 'nether');
+// (No Nether biome map: it doesn't match Bedrock. A note says so; no biome in the readout.)
+const netherInfo = await page.evaluate(() => ({
+  biomeLayer: worldatlas.view.map.hasLayer(worldatlas.view.biome),
+  note: document.querySelector('.dim-note:not([hidden])')?.textContent ?? '',
+  readout: document.querySelector('.ro-biome')?.textContent ?? '',
+}));
+check('Nether: no biome map, a note says why, no biome readout', !netherInfo.biomeLayer && /don.t match Bedrock/.test(netherInfo.note) && netherInfo.readout === '', JSON.stringify(netherInfo));
 
 // 6. End tab
 await page.getByRole('tab', { name: 'End' }).click();
@@ -143,11 +150,13 @@ await page.waitForTimeout(1500);
 const endInfo = await page.evaluate(async () => ({
   dim: worldatlas.store.settings.dim,
   tiles: document.querySelectorAll('.leaflet-tile-pane .leaflet-layer:first-child canvas.leaflet-tile-loaded').length,
+  biomeLayer: worldatlas.view.map.hasLayer(worldatlas.view.biome),
+  note: document.querySelector('.dim-note:not([hidden])')?.textContent ?? '',
   centre: (await getBiome(0, 0, { dim: 'end' })).name,
   outer: (await getBiome(1500, 0, { dim: 'end' })).name,
 }));
-check('End tab renders End biomes', endInfo.dim === 'end' && endInfo.tiles > 0 && endInfo.centre === 'the_end' && endInfo.outer !== 'the_end',
-  `centre ${endInfo.centre}, x=1500 ${endInfo.outer}, ${endInfo.tiles} tiles`);
+check('End tab: no End terrain drawn (it doesn\'t match Bedrock), with a note', endInfo.dim === 'end' && endInfo.tiles === 0 && !endInfo.biomeLayer && /End islands don.t match Bedrock/.test(endInfo.note),
+  `${endInfo.tiles} tiles, note: ${endInfo.note.slice(0, 60)}`);
 
 // 7. Biome search: type a biome in the Go-to box (overworld), get numbered results
 await page.getByRole('tab', { name: 'Overworld' }).click();
@@ -242,6 +251,45 @@ const n2 = await page.evaluate(async () => {
   return worldatlas.structState().assessment.confidence;
 });
 check('Nether: wrong structure type is a mismatch', n2 === 'mismatch', n2);
+
+// 7d. Overworld structures: villages show search boxes; temples (unverified pins) only where the biome allows
+await page.locator('.struct-tabs').getByRole('tab', { name: 'Villages' }).click();
+await page.waitForFunction(() => worldatlas.structState().kind.id === 'village' && worldatlas.store.settings.dim === 'overworld');
+await page.waitForFunction(() => document.querySelectorAll('.structs .hits .mitem').length > 0, null, { timeout: 30000 });
+const v0 = await page.evaluate(() => ({ conf: worldatlas.structState().assessment.confidence, first: document.querySelector('.structs .hits .mitem-sub')?.textContent }));
+check('Villages: search boxes first (Overworld)', v0.conf === 'none' && /Centre of search box/.test(v0.first ?? ''), JSON.stringify(v0));
+await page.evaluate(() => worldatlas.store.updateSettings({ structUnverified: true }));
+await page.locator('.struct-tabs').getByRole('tab', { name: 'Temples' }).click();
+await page.waitForFunction(() => worldatlas.structState().kind.id === 'temple' && worldatlas.structState().unverified);
+await page.waitForFunction(() => document.querySelectorAll('.structs .hits .mitem').length > 0, null, { timeout: 60000 });
+const t1 = await page.evaluate(async () => {
+  const rows = [...document.querySelectorAll('.structs .hits .mitem')].map((b) => ({ xz: b.querySelector('.mitem-name').textContent, what: b.querySelector('.mitem-sub').textContent }));
+  const allow = { desert: 'desert pyramid', jungle: 'jungle temple', bamboo_jungle: 'jungle temple', swamp: 'witch hut', mangrove_swamp: 'witch hut', snowy_plains: 'igloo', snowy_taiga: 'igloo', snowy_slopes: 'igloo' };
+  const out = [];
+  for (const r of rows) { const [x, z] = r.xz.split(',').map(Number); const b = (await getBiome(x, z, { dim: 'overworld' })).name; out.push({ ...r, b, ok: allow[b] != null && r.what.includes(allow[b]) }); }
+  return out;
+});
+check('Temples: each suggestion is in a biome that allows it, the right kind', t1.length > 0 && t1.every((r) => r.ok), t1.slice(0, 2).map((r) => `${r.xz} ${r.b}`).join('; '));
+await page.evaluate(() => worldatlas.store.updateSettings({ structUnverified: false }));
+
+// 7e. Slime chunks and the portal planner (Tools)
+await page.evaluate(() => worldatlas.store.updateSettings({ slimeChunks: true }));
+await page.getByRole('button', { name: 'Converter & measure' }).click();
+const slimeRow = page.locator('.tools .hits .mitem').first();
+await slimeRow.waitFor();
+await slimeRow.click();
+await page.waitForTimeout(500);
+const ro = await page.evaluate(() => document.querySelector('.ro-sub')?.textContent ?? '');
+check('Slime chunks: the nearest, and the readout says so there', /slime chunk/.test(ro), ro);
+await page.evaluate(async () => {
+  await worldatlas.store.saveMarker({ id: 'np', name: 'Old Nether portal', categoryId: 'portal', x: 110, y: 64, z: 95, dim: 'nether', notes: '', status: 'built', createdAt: new Date().toISOString(), showLinked: false });
+});
+await page.getByRole('button', { name: 'Converter & measure' }).click();
+await page.getByLabel('Portal direction').selectOption('overworld');
+await page.getByLabel('Portal X').fill('800'); await page.getByLabel('Portal Y').fill('64'); await page.getByLabel('Portal Z').fill('800');
+const plan = await page.locator('.plan-out').textContent();
+check('Portal planner: Nether spot by floor division, and a nearby portal warned about', /100, 64, 100/.test(plan) && /Old Nether portal/.test(plan), plan.slice(0, 160));
+await page.screenshot({ path: path.join(os.tmpdir(), 'wa-portal.png') });
 
 await browser.close();
 

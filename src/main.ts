@@ -7,11 +7,12 @@ import { Syncer } from './sync/syncer';
 import { KINDS, TYPE_LABEL, kindForDim, structureState, type StructureKind } from './structures/endCities';
 import { structuresPanel, type StructuresHost } from './ui/structures';
 import * as bedrock from './structures/bedrock';
+import { isSlimeChunk } from './structures/slime';
 import { MapView, formatMeasure } from './map/mapView';
 import { clearTileCache } from './map/tileCache';
 import { h } from './dom';
 import { chunkOf, parseCoords, toOtherDimension, DIMENSIONS, DIM_LABEL, type Dimension } from './coords';
-import { prettyBiome, BIOMES_BY_DIM } from './biomes';
+import { prettyBiome, BIOMES_BY_DIM, biomesMatchBedrock } from './biomes';
 import type { Marker } from './model';
 import {
   blankMarker,
@@ -88,7 +89,9 @@ async function main() {
     sheetBody);
   const toastEl = h('div', { class: 'toast', role: 'status' });
   const banner = h('div', { class: 'banner' });
-  app.append(mapEl, topbar, readout, legend, sheet, toastEl, banner);
+  // (On the Nether and End tabs: why there's no terrain.)
+  const dimNote = h('div', { class: 'dim-note', role: 'note' });
+  app.append(mapEl, topbar, readout, legend, sheet, toastEl, banner, dimNote);
 
   let toastTimer = 0;
   const toast = (msg: string) => {
@@ -143,7 +146,7 @@ async function main() {
         what && h('span', { class: 'ro-what' }, what),
         h('strong', {}, `${p.x}, ${p.z}`),
         biomeSpan),
-      h('div', { class: 'ro-sub' }, `Chunk ${ch.x}, ${ch.z}${other ? ` · ${DIM_LABEL[other.dim]} ${other.x}, ${other.z}` : ''}`),
+      h('div', { class: 'ro-sub' }, `Chunk ${ch.x}, ${ch.z}${store.settings.dim === 'overworld' && isSlimeChunk(ch.x, ch.z) ? ' (slime chunk)' : ''}${other ? ` · ${DIM_LABEL[other.dim]} ${other.x}, ${other.z}` : ''}`),
     );
     // The pinned-point actions only re-render when the pin changes, so the
     // buttons stay stable while the mouse moves over the map.
@@ -158,6 +161,7 @@ async function main() {
     }
     clearTimeout(biomeTimer);
     const seq = ++biomeSeq;
+    if (!biomesMatchBedrock(store.settings.dim)) { biomeSpan.textContent = ''; return; }
     biomeTimer = window.setTimeout(async () => {
       const { seed, dim } = store.settings;
       const id = await client.biomeAt(seed, mcResolved(), dim, p.x, p.z, dim === 'nether' ? 64 : undefined);
@@ -175,6 +179,11 @@ async function main() {
       }, DIM_LABEL[d]));
     }
     document.documentElement.dataset.dim = store.settings.dim;
+    const d = store.settings.dim;
+    dimNote.hidden = biomesMatchBedrock(d);
+    dimNote.textContent = d === 'nether'
+      ? 'Nether terrain isn\'t shown: this generator\'s Nether biomes don\'t match Bedrock. Markers, the grid, portals and structure boxes still work.'
+      : d === 'end' ? 'End terrain isn\'t shown: this generator\'s End islands don\'t match Bedrock. Markers, the grid and End City boxes still work.' : '';
   }
   async function switchDim(d: Dimension, keepPos = false) {
     if (store.settings.dim === d) return;
@@ -209,7 +218,7 @@ async function main() {
       }
       legend.append(list);
     }
-    legend.append(h('div', { class: 'legend-foot' }, store.settings.dim === 'end' ? 'Biomes: Java-parity generator (Java End zones)' : 'Biomes: Java-parity generator'));
+    legend.append(h('div', { class: 'legend-foot' }, biomesMatchBedrock(store.settings.dim) ? 'Biomes: Java-parity generator (the Overworld matches Bedrock)' : `No ${DIM_LABEL[store.settings.dim]} biome map: it doesn't match Bedrock`));
     if (syncer.status.state !== 'off') legend.append(h('div', { class: 'legend-foot sync-' + syncer.status.state }, syncStatusText(syncer.status)));
   }
 
@@ -240,6 +249,10 @@ async function main() {
     clearTileCache: async () => { await clearTileCache(); view.biome.redraw(); },
     toast,
     startMeasure: () => { closeSheet(); toggleMeasure(true); },
+    goTo: async (d, x, z) => {
+      if (store.settings.dim !== d) await switchDim(d, true);
+      biomeHost.flyTo(x, z);
+    },
   };
   const openList = () => openSheet('Markers', listPanel(host));
   const openSettings = () => openSheet('Settings', settingsPanel(host, () => openSheet('Categories', categoriesPanel(host)), syncer));
@@ -275,18 +288,26 @@ async function main() {
     },
     addMarkerAt: (x, z) => addAt({ x, z }),
   };
-  const openBiomeSearch = (preset?: { biome: number; autorun: boolean }) =>
+  const openBiomeSearch = (preset?: { biome: number; autorun: boolean }) => {
+    // (Overworld only: the Nether and End biomes here don't match Bedrock.)
+    if (!biomesMatchBedrock(store.settings.dim)) {
+      openSheet('Find biome', h('div', {},
+        h('p', {}, `Biome search is for the Overworld only: this generator's ${DIM_LABEL[store.settings.dim]} biomes don't match Bedrock, so results there would send you to the wrong place.`),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: async () => { await switchDim('overworld'); openBiomeSearch(preset); } }, 'Switch to the Overworld'))));
+      return;
+    }
     openSheet('Find biome', biomeSearchPanel(host, biomeHost, preset));
+  };
   // ---- structure suggestions (End Cities, bastions + fortresses) ----
   const STRUCT_CATS = new Set(Object.values(KINDS).flatMap((k) => Object.values(k.categories)));
-  // Overworld has no predicted structures yet: the panel then shows the Nether
-  let structKind: StructureKind = store.settings.dim === 'end' ? KINDS.end : KINDS.nether;
+  // (Each dimension's own: Overworld villages, outposts, monuments, mansions and temples; Nether; End.)
+  let structKind: StructureKind = kindForDim(store.settings.dim);
   let structState = structureState(structKind, store.settings.seed, store.markers, store.settings.structUnverified);
   let structKey = '';
   const structPanelOpen = () => current.startsWith('Suggested ');
   function refreshStructures(force = false) {
     const st = store.settings;
-    if (st.dim === 'end' || st.dim === 'nether') structKind = kindForDim(st.dim);
+    structKind = kindForDim(st.dim, structKind);
     // only seed, the layer toggles and structure markers affect predictions
     const key = [structKind.id, st.seed, st.dim, st.structBoxes, st.structPins, st.structUnverified,
       ...store.markers.filter((m) => STRUCT_CATS.has(m.categoryId)).map((m) => `${m.id}:${m.categoryId}:${m.x}:${m.z}:${m.dim}:${m.status}`)].join('|');
@@ -301,7 +322,7 @@ async function main() {
         pinned = { x: p.x, z: p.z };
         view.showPick(pinned);
         updateReadout();
-        toast(`Predicted ${p.type ? TYPE_LABEL[p.type].toLowerCase() : 'End City'} at ${p.x}, ${p.z}`);
+        toast(`Predicted ${(TYPE_LABEL[p.type ?? ''] ?? structKind.noun).toLowerCase().replace(/^end city$/, 'End City')} at ${p.x}, ${p.z}`);
       },
     });
     if (structPanelOpen()) void openStructures(structKind, false, true);
@@ -316,14 +337,14 @@ async function main() {
     },
     flyTo: (x, z) => biomeHost.flyTo(x, z),
     addPlanned: (sg) => {
-      const type = sg.type ?? (structKind.id === 'nether' ? 'bastion' : '');
+      const type = sg.type ?? Object.keys(structKind.categories)[0];
       const m = blankMarker(host, sg.x, sg.z, structKind.dim);
       const categoryId = structKind.categories[type] ?? Object.values(structKind.categories)[0];
-      openMarker({ ...m, name: `${TYPE_LABEL[type]} (suggested)`, categoryId, status: 'planned' }, true);
+      openMarker({ ...m, name: `${TYPE_LABEL[type] ?? structKind.noun} (suggested)`, categoryId, status: 'planned' }, true);
     },
     editMarker: (m) => { if (m.dim !== store.settings.dim) void switchDim(m.dim, true); view.goTo(m.x, m.z); openMarker(m, false); },
     switchKind: (k) => void openStructures(k),
-    zoneAt: async (x, z) => client.names[await client.biomeAt(store.settings.seed, mcResolved(), 'end', x, z)] ?? '',
+    biomeAt: (x, z) => client.biomeAt(store.settings.seed, mcResolved(), 'overworld', x, z),
   };
   // keep "Nearest to map centre" current while the panel is open
   let structMoveTimer = 0;
@@ -337,12 +358,12 @@ async function main() {
     }, 300);
   });
   async function openStructures(kind?: StructureKind, switchDims = true, fromRefresh = false) {
-    const target = kind ?? (store.settings.dim === 'end' ? KINDS.end : store.settings.dim === 'nether' ? KINDS.nether : structKind.id === 'end' ? KINDS.nether : structKind);
+    const target = kind ?? kindForDim(store.settings.dim, structKind);
     structKind = target;
     if (switchDims && store.settings.dim !== target.dim) {
       await switchDim(target.dim);
       // far enough out to see several grid regions
-      view.map.setZoom(target.id === 'end' ? -3 : -2, { animate: false });
+      view.map.setZoom(target.id === 'end' || target.id === 'mansion' || target.id === 'outpost' ? -3 : -2, { animate: false });
     }
     if (!fromRefresh) {
       refreshStructures(true);
@@ -354,7 +375,7 @@ async function main() {
   function renderSuggestions() {
     suggest.innerHTML = '';
     for (const m of store.markers.filter((m) => m.dim === store.settings.dim)) suggest.append(h('option', { value: m.name }));
-    for (const id of BIOMES_BY_DIM[store.settings.dim]) suggest.append(h('option', { value: prettyBiome(client.names[id]) }));
+    if (biomesMatchBedrock(store.settings.dim)) for (const id of BIOMES_BY_DIM[store.settings.dim]) suggest.append(h('option', { value: prettyBiome(client.names[id]) }));
   }
   const openMarker = (m: Marker, isNew: boolean) => openSheet(isNew ? 'New marker' : m.name, markerForm(host, m, isNew));
   function addAt(p: { x: number; z: number }) {
@@ -391,7 +412,7 @@ async function main() {
     const needle = q.trim().toLowerCase();
     const m = needle && store.markers.find((m) => m.name.toLowerCase() === needle) || store.markers.find((m) => needle && m.name.toLowerCase().includes(needle));
     if (m) return void flyToMarker(m);
-    const b = matchBiome(client.names, store.settings.dim, q);
+    const b = biomesMatchBedrock(store.settings.dim) ? matchBiome(client.names, store.settings.dim, q) : null;
     if (b != null) return void openBiomeSearch({ biome: b, autorun: true });
     toast('Type coordinates like “1180, -2808”, a marker or a biome name');
   }

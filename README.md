@@ -102,15 +102,17 @@ If you edit the backend later:
 ## Features (phase 1)
 
 - **Map:** muted biome palette. A faint chunk grid (16 blocks, from zoom +1) and region grid (512 blocks, from zoom −2) show only when zoomed in. The cursor/tap readout shows X, Z, biome, chunk and the 1:8 position in the other dimension. The "Go to" box takes `X, Z`, `X Y Z` or a marker name. Zoom runs from −6 (1 px = 64 blocks) to +5 (32 px/block).
-- **Dimensions:** Overworld, Nether and End tabs. Switching tabs converts the view position 1:8. Each marker belongs to one dimension. A marker can show its *linked portal position* (dashed ghost marker) in the other dimension.
+- **Dimensions:** Overworld, Nether and End tabs. Switching tabs converts the view position 1:8. Each marker belongs to one dimension. Only the Overworld has a biome map: the generator's Nether biomes and End islands don't match Bedrock (a Bedrock bastion was found where it showed basalt deltas), so those tabs show a plain background, a note saying why, and no biome in the readout. Markers, grids, portals and structure boxes still work there. A marker can show its *linked portal position* (dashed ghost marker) in the other dimension.
 - **Markers:** add one by tapping the map and pressing "+ Add marker at X, Z", by using the + button (map centre), or by typing coordinates in the form. Fields: name, category, X, Y (optional), Z, dimension, notes, status (planned / found / built / looted), created date.
 - **Categories:** you can edit the name, colour and icon (18 built-in glyphs), add new ones, and delete them (their markers move to another category). The compact legend toggles visibility per category.
 - **List:** search, filter by category, status and dimension, and sort by distance from a reference point. The reference is your Base marker by default; you can also pick any marker or the map centre. Tapping an item flies the map to it.
-- **Find biome near me:** the magnifier button, or type a biome name into the Go-to box (e.g. `cherry grove`, `deep dark`). It lists the 8 nearest separate patches of that biome around the map centre, the tapped point or your reference marker. Each result has coordinates, distance and the linked Nether position. Results show as numbered pins on the map; tap one to fly there, or press **+ Marker** to save it.
+- **Find biome near me** (Overworld only): the magnifier button, or type a biome name into the Go-to box (e.g. `cherry grove`, `deep dark`). It lists the 8 nearest separate patches of that biome around the map centre, the tapped point or your reference marker. Each result has coordinates, distance and the linked Nether position. Results show as numbered pins on the map; tap one to fly there, or press **+ Marker** to save it.
   - Search is done in a worker at 1:16 resolution, nearest rings first, up to 12,000 blocks (6,000 in the Nether and End). Each hit is then refined to a 1:4 cell inside the biome.
   - Cave biomes (lush caves, dripstone caves, deep dark) are searched underground, at Y 0 or Y −40 by default; you can change the Y.
 - **Tools:** 1:8 converter, and a measure tool. Tap two points, or tap markers to include their Y. It shows the 3D distance, the horizontal distance and the Nether travel equivalent.
-- **Settings:** seed, generator version, theme (system/light/dark), grid toggles, JSON export/import, clear tile cache, category editor.
+- **Portal planner** (Tools): type a portal's X, Y, Z (or **Use map centre**), Overworld → Nether or back, and it gives the exact spot to build the matching portal: Overworld → Nether divides X and Z by 8 rounding down (floor division), Nether → Overworld multiplies by 8, the height kept (inside the Nether: Y 1–122). **Show in the Nether** goes there; **+ Marker** saves it as a planned Portal. It warns about portals marked with the **Portal** category that the game could link to by mistake: one within the area searched around the new spot (16 blocks in the Nether, 128 in the Overworld, the whole height), or, on the way back, one nearer to where the game looks than the portal you started from.
+- **Slime chunks** (Tools, or Settings → Display): Bedrock's formula, the same in every world whatever the seed: MT19937 seeded with `(chunkX × 0x1f1f1f1f) ^ chunkZ`, a slime chunk when its first output is a multiple of 10 (Bedrockified's `seedSlimeChunk`). A toggle shades them green on the Overworld map (from zoom −2); the readout says "(slime chunk)"; Tools lists the five nearest. Slimes spawn in them below Y 40, in any light, except in mushroom fields. Easy to check in game: if slimes spawn in a chunk shown green, it's right.
+- **Settings:** seed, generator version, theme (system/light/dark), grid and slime-chunk toggles, JSON export/import, clear tile cache, category editor.
 
 On first run it creates two seed markers, *Dungeon A* (1180, −5, −2808) and *Dungeon B* (1204, −1, −2807), plus a measure line between them that reads **24.4 blocks**. That figure is the 3D distance; the horizontal distance is 24.0.
 
@@ -159,7 +161,6 @@ The castle button opens the suggestions panel. Its End Cities tab switches the m
   - Any find that no variant predicts hides the pins and lists how far off each find is.
   - A find outside every grid box warns that the grid itself may be wrong.
   - "Show unverified predictions" draws the low-32 pins before any match, dashed and labelled.
-- **Void hint:** each suggestion says "outer islands" or "likely void" from Java's End zones. Bedrock's islands may differ.
 - **Tip:** "+ Marker" saves a suggestion as a planned End City. When you reach it, move the marker to the entrance tower base and set it to Found; it then counts as evidence.
 
 ### Nether: bastions and fortresses
@@ -181,11 +182,23 @@ The same panel has a **Bastions & Fortresses** tab, which opens the Nether.
   - Markers in the **Bastion** or **Nether Fortress** categories (status Found, Built or Looted, in the Nether) count as finds.
   - The tolerance is 48 blocks because fortresses sprawl, and the type has to match too. A bastion marker where a fortress is predicted counts as a miss.
 - **Suggestions:** pins are coloured by type, and each suggestion shows the Overworld portal position (×8).
-- **Caveats:**
-  - In Java, bastions never generate in basalt deltas, so a predicted bastion there may be missing.
-  - The app's Nether biomes aren't verified against Bedrock.
+- **Caveat:** the generator's Nether biomes don't match Bedrock (a bastion was found where they showed basalt deltas), so no biome checks are made in the Nether.
 
 The End Cities on this seed also match the low-32 formula: 426, 1327 and 1642, 1983 were each 7 blocks from their predictions, at the same +2 X, +7 Z offset.
+
+### Overworld: villages, outposts, monuments, mansions, temples
+
+On the Overworld tab the panel has **Villages**, **Outposts**, **Monuments**, **Mansions** and **Temples**, learning from your finds the same way. Unlike the Nether and End, the Overworld biome map matches Bedrock, so each suggestion is also checked against the biomes the structure needs.
+
+- **The grids (hypotheses):** each structure has a few possible grids, from MCBEStructureFinder's Bedrock values (and Java's where Bedrock's are unknown), each with both offset kinds (uniform, or the average of two draws), and the three seed reductions:
+  - villages: 34-chunk regions (544 blocks), offsets 0–25, salt 10387312; mark the bell (within 64 blocks);
+  - pillager outposts: 80-chunk regions (offsets 0–55) or Java's 32 (0–23), salt 165745296; mark the watchtower's foot (24 blocks). Not every region has one: outposts are rare and avoid villages;
+  - ocean monuments: 32-chunk regions, offsets 0–26, salt 10387313; mark the middle (32 blocks);
+  - woodland mansions: 80-chunk regions (1,280 blocks), offsets 0–59, salt 10387319; mark the front door (40 blocks);
+  - temples: one shared grid of 32-chunk regions, offsets 0–23, salt 14357617; the biome there picks which (16 blocks).
+- **Choosing:** the grid and seed reduction matching every find (the least likely by chance) is used; the chance of a coincidence counts every grid tried. Until one matches, only the search boxes show (from the first grid).
+- **Biomes** (Overworld biome ids, generous so a real spot isn't ruled out): villages in plains, sunflower plains, meadow, desert, savanna (and plateau), taiga, snowy plains and snowy taiga; outposts there and in grove, snowy slopes, cherry grove and the peaks; monuments in deep oceans; mansions in dark forest and pale garden; temples: desert → desert pyramid, jungle and bamboo jungle → jungle temple, swamp and mangrove swamp → witch hut, snowy plains, snowy taiga and snowy slopes → igloo. Pins and suggestions show only where the biome allows it (a temple's kind from its biome).
+- **Categories:** Village, Pillager Outpost, Monument, Mansion and Temple (Pillager Outpost and Temple are added to existing worlds once).
 
 ## How biome tiles work
 
@@ -222,10 +235,9 @@ npm run e2e -- http://localhost:4173/
 
 ## Known limitations
 
-- **Bedrock structures are not predicted.** cubiomes' structure placement is Java-only and wrong for Bedrock, so it is not compiled in. Villages, strongholds, monuments and so on come only from markers you add.
+- **Bedrock structures are predicted experimentally only.** cubiomes' structure placement is Java-only and wrong for Bedrock, so it is not compiled in. The app's own Bedrock grids (above) are trusted only as far as your finds match them. Strongholds, ancient cities, trial chambers, shipwrecks and ruined portals aren't predicted.
 - **Biomes come from a Java-parity generator.** Bedrock and Java have shared biome generation since 1.18. The newest version cubiomes supports is Java **1.21.4 (Winter Drop, pale garden)**. As far as I know, no later version has changed biome generation, but that is not verified. If a later update adds or moves biomes, the map will be wrong until cubiomes is updated.
-- **End biomes are Java's.** Bedrock has a single End biome, so in-game F3 always says "The End". The End tab shows Java's End zones (main island, small end islands, midlands, highlands, barrens) from cubiomes. They still outline the central island, the void ring and where the outer islands are, but that layout is unverified for Bedrock. End markers have no linked dimension.
-- **Nether biomes are not verified against Bedrock.** They use cubiomes' Java Nether generator. I have not confirmed that Bedrock's Nether biome layout matches Java's for the same seed, so check them in-game.
+- **No Nether or End terrain.** cubiomes' Java Nether biomes and End islands don't match Bedrock (checked in game: a bastion at −272, −272 where it showed basalt deltas), so those tabs don't draw them, the readout gives no biome there, and biome search is Overworld only. End markers have no linked dimension.
 - **The surface map is 2D.** It is sampled at Y 256. In-game F3 reports the biome at your feet, which underground can be a cave biome. Use `getBiome` with `y` to compare.
 - **Text seeds are not supported.** Seeds must be numeric 64-bit values.
 
@@ -233,7 +245,8 @@ npm run e2e -- http://localhost:4173/
 
 - [x] Experimental Bedrock structure layer for **End Cities** (see above).
 - [x] Same approach for Nether bastions and fortresses (see above).
-- [ ] Overworld structures (villages, outposts, monuments, mansions), which also need Bedrock biome checks.
+- [x] Overworld structures (villages, outposts, monuments, mansions, temples), with biome checks (see above).
+- [x] Slime chunks and a portal planner.
 - [ ] Optional overlay of real explored terrain from tiles exported by a Bedrock renderer (e.g. bedrock-render or PapyrusCS).
 
 ## Layout

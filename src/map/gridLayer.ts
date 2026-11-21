@@ -3,21 +3,26 @@
 
 import L from 'leaflet';
 import { tileBlocks, TILE_PX } from '../coords';
+import { isSlimeChunk } from '../structures/slime';
 
 export const CHUNK_MIN_ZOOM = 1; // 16 blocks = 32px
 export const REGION_MIN_ZOOM = -2; // 512 blocks = 128px
+export const SLIME_MIN_ZOOM = -2; // a chunk = 4px
 
 export class GridLayer extends L.GridLayer {
   chunk = true;
   region = true;
+  /** Bedrock slime chunks shaded (Overworld only; the map view sets it). */
+  slime = false;
 
   constructor(opts?: L.GridLayerOptions) {
     super({ tileSize: TILE_PX, pane: 'overlayPane', updateWhenZooming: false, minZoom: -20, maxZoom: 20, ...opts });
   }
 
-  setVisible(chunk: boolean, region: boolean): void {
+  setVisible(chunk: boolean, region: boolean, slime = this.slime): void {
     this.chunk = chunk;
     this.region = region;
+    this.slime = slime;
     this.redraw();
   }
 
@@ -52,6 +57,14 @@ export class GridLayer extends L.GridLayer {
       ctx.stroke();
     };
 
+    if (this.slime && z >= SLIME_MIN_ZOOM) {
+      ctx.fillStyle = css.getPropertyValue('--slime').trim() || 'rgba(70, 170, 60, 0.38)';
+      const c0x = Math.floor(bx0 / 16); const c0z = Math.floor(bz0 / 16); const n = Math.ceil(blocks / 16);
+      const s = 16 * pxPerBlock;
+      for (let cz = c0z; cz < c0z + n; cz++) for (let cx = c0x; cx < c0x + n; cx++) {
+        if (isSlimeChunk(cx, cz)) ctx.fillRect((cx * 16 - bx0) * pxPerBlock, (cz * 16 - bz0) * pxPerBlock, s, s);
+      }
+    }
     if (this.chunk && z >= CHUNK_MIN_ZOOM) draw(16, css.getPropertyValue('--grid-chunk').trim(), 1 / dpr);
     if (this.region && z >= REGION_MIN_ZOOM) draw(512, css.getPropertyValue('--grid-region').trim(), 1);
     return canvas;
